@@ -1,0 +1,16 @@
+{
+  "$schema": "https://skills.sh/schemas/skills.sh.schema.json",
+  "notGrouped": "bottom",
+  "groupings": [
+    {
+      "title": "Design",
+      "description": "A DESIGN.md whose tokens are parsed from the code and enforced by the build.",
+      "skills": ["design-contract"]
+    },
+    {
+      "title": "Agents",
+      "description": "AGENTS.md, CLAUDE.md, vendored skills and decision records that every agent reads the same way.",
+      "skills": ["agent-conventions"]
+    }
+  ]
+}

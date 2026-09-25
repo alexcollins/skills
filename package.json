@@ -1,0 +1,11 @@
+{
+  "name": "@alexcollins/skills",
+  "private": true,
+  "description": "Agent skills: design-contract and agent-conventions",
+  "license": "MIT",
+  "type": "module",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "test": "node --test skills/design-contract/scripts/design-tokens.test.mjs skills/agent-conventions/scripts/verify-conventions.test.mjs"
+  }
+}
