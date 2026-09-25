@@ -46,7 +46,7 @@ import { dirname, join, relative, resolve, extname, sep } from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 
-export const VERSION = '1.0.0';
+export const VERSION = '1.1.0';
 
 /* ── CLI ─────────────────────────────────────────────────────────── */
 
@@ -601,7 +601,7 @@ function loadTailwind3(config) {
   };
   flat(own);
   if (Object.keys(colors).length) out.colors = colors;
-  return { theme: out, raw };
+  return { theme: out, raw, full: resolved };
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -727,7 +727,8 @@ function sweep(config) {
     }
   }
   const hardcodedColors = [...found.color.entries()].map(([v, loc]) => ({ value: v, at: loc }));
-  return { literals, where, files: files.length, hardcodedColors };
+  const corpus = [...files, ...cssFiles].map((f) => (f.endsWith('.css') ? stripCssComments(readText(f)) : stripCodeComments(readText(f)))).join('\n');
+  return { literals, where, files: files.length, hardcodedColors, corpus };
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -886,8 +887,21 @@ function typographyEntry(model, tw3, spec, name, fluid = 'max', comments = {}) {
   return entry;
 }
 
-function mapValue(model, raw, where) {
+function mapValue(model, raw, where, tw3) {
   if (typeof raw !== 'string') return raw;
+  /* tailwind:borderRadius.2xl — a Tailwind 3 theme value, resolved by
+     Tailwind's own resolver. (Tailwind 4 keeps its theme in CSS: map
+     --radius-2xl directly.) */
+  const tw = raw.match(/^tailwind:([\w.-]+)$/);
+  if (tw) {
+    if (!tw3) fail(`${where}: ${raw} needs config.tailwind (Tailwind 3). On Tailwind 4, map the custom property, e.g. --radius-2xl`);
+    let node = tw3.full;
+    for (const key of tw[1].split('.')) node = node?.[key];
+    if (node == null) fail(`${where}: ${raw} is not in the resolved Tailwind theme`);
+    if (Array.isArray(node)) node = node[0];
+    if (typeof node !== 'string' && typeof node !== 'number') fail(`${where}: ${raw} is a group, not a value`);
+    return model.resolveIn(String(node));
+  }
   const at = raw.match(/^(--[\w-]+)@(.+)$/);
   if (at) return checkResolved(model.resolveIn(`var(${at[1]})`, at[2]), raw, where);
   if (raw.startsWith('--')) return checkResolved(model.resolveIn(`var(${raw})`), raw, where);
@@ -921,7 +935,7 @@ function buildFrontmatter(config, baseModel, tw3) {
   if (d.colors) {
     fm.colors = {};
     for (const [name, raw] of Object.entries(d.colors)) {
-      const v = mapValue(model, raw, `colors.${name}`);
+      const v = mapValue(model, raw, `colors.${name}`, tw3);
       if (!isColor(v)) fail(`colors.${name}: ${raw} resolved to "${v}", which is not a colour`);
       fm.colors[name] = v;
     }
@@ -945,7 +959,7 @@ function buildFrontmatter(config, baseModel, tw3) {
     if (!d[group]) continue;
     fm[group] = {};
     for (const [name, raw] of Object.entries(d[group])) {
-      let v = toDimension(mapValue(model, raw, `${group}.${name}`), `${group}.${name}`, fluid, comments);
+      let v = toDimension(mapValue(model, raw, `${group}.${name}`, tw3), `${group}.${name}`, fluid, comments);
       if (typeof v === 'string' && /^-?\d*\.?\d+$/.test(v)) v = Number(v);
       fm[group][name] = v;
     }
@@ -955,7 +969,7 @@ function buildFrontmatter(config, baseModel, tw3) {
     for (const [comp, props] of Object.entries(d.components)) {
       fm.components[comp] = {};
       for (const [prop, raw] of Object.entries(props)) {
-        fm.components[comp][prop] = typeof raw === 'string' && /^\{[\w.-]+\}$/.test(raw) ? raw : mapValue(model, raw, `components.${comp}.${prop}`);
+        fm.components[comp][prop] = typeof raw === 'string' && /^\{[\w.-]+\}$/.test(raw) ? raw : mapValue(model, raw, `components.${comp}.${prop}`, tw3);
       }
     }
     /* Every {ref} must land on something this block defines. */
@@ -1022,7 +1036,68 @@ const sortObj = (o) =>
       .map((k) => [k, o[k] && typeof o[k] === 'object' && !Array.isArray(o[k]) ? sortObj(o[k]) : o[k]])
   );
 
-function build(config) {
+/* ══════════════════════════════════════════════════════════════════
+   extend: a project's own semantic layer
+
+   A mature design system often has consumers of tokens.json that want
+   a curated shape — color.primitive, spacing.rhythm, motion.easing —
+   not the raw per-mode map. config.extend names a module whose default
+   export assembles that shape from the parsed model, with the same
+   fail-loudly helpers the generator uses. Its output is merged into
+   tokens.json at the top level and gated by --check like everything
+   else, so the curated layer can't drift either.
+   ══════════════════════════════════════════════════════════════════ */
+
+const RESERVED = new Set(['$generated', 'sources', 'modes', 'theme', 'scoped', 'tailwind', 'literals', 'extra']);
+
+async function runExtend(config, model, tw3, swept) {
+  if (!config.extend) return {};
+  const file = resolve(ROOT, config.extend);
+  if (!existsSync(file)) fail(`config.extend names ${config.extend}, which does not exist`);
+  const mod = await import(pathToFileURL(file).href);
+  if (typeof mod.default !== 'function') fail(`${config.extend} must export a default function`);
+
+  const root = Object.assign({}, ...model.rootKeys.map((k) => model.modes[k]));
+  const helpers = {
+    /** A :root custom property as written: { value, var }. Throws if absent. */
+    v: (name) => {
+      if (!(name in root)) fail(`${config.extend}: ${name} is not declared in :root`);
+      return { value: root[name], var: name };
+    },
+    /** Every :root custom property, as written. */
+    root: { ...root },
+    /** A value with every var() and calc() resolved, in :root or a mode. */
+    resolve: (value, mode) => model.resolveIn(value, mode),
+    /** The first rule for exactly `selector` that declares `prop`. Throws if none. */
+    decl: (selector, prop) => {
+      const hits = model.rules.filter((r) => r.selector === selector);
+      if (!hits.length) fail(`${config.extend}: selector ${selector} not found in the stylesheets`);
+      for (const r of hits) {
+        const d = r.decls.find(([p]) => p === prop);
+        if (d) return d[1];
+      }
+      fail(`${config.extend}: ${selector} declares no ${prop}`);
+    },
+    /** Distinct matches of group 1 of `re` across the swept files, sorted. */
+    distinct: (re, cast = (x) => x) =>
+      [...new Set([...swept.corpus.matchAll(new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g'))].map((m) => m[1]))]
+        .map(cast)
+        .sort((a, b) => (typeof a === 'number' ? a - b : String(a).localeCompare(String(b)))),
+    /** A plain array or object literal assigned to `name` in `file`. */
+    literal: (file, name) => literalFromCode(file, name),
+    /** The Tailwind 3 theme, fully resolved (null on Tailwind 4). */
+    tailwind: tw3?.full ?? null,
+    /** The sweep's distinct literals. */
+    literals: swept.literals,
+    fail: (msg) => fail(`${config.extend}: ${msg}`),
+  };
+  const out = await mod.default(helpers);
+  if (!out || typeof out !== 'object' || Array.isArray(out)) fail(`${config.extend} must return an object`);
+  for (const k of Object.keys(out)) if (RESERVED.has(k)) fail(`${config.extend} returned "${k}", which the generator owns. Rename it.`);
+  return out;
+}
+
+async function build(config) {
   const model = loadModel(config);
   const tw3 = loadTailwind3(config);
   const swept = sweep(config);
@@ -1074,8 +1149,10 @@ function build(config) {
     sources: {
       css: config.css,
       ...(config.tailwind ? { tailwind: config.tailwind } : {}),
+      ...(config.extend ? { extend: config.extend } : {}),
       sweep: config.sweep?.include ?? ['src', 'app', 'components', 'lib', 'pages'],
     },
+    ...(await runExtend(config, model, tw3, swept)),
     modes: sortObj(modes),
     ...(Object.keys(theme).length ? { theme: sortObj(theme) } : {}),
     ...(Object.keys(scoped).length ? { scoped: sortObj(scoped) } : {}),
@@ -1451,7 +1528,7 @@ function loadConfig() {
   }
 }
 
-function main() {
+async function main() {
   if (flag('--init')) {
     if (existsSync(CONFIG_PATH) && !flag('--force')) fail(`${rel(CONFIG_PATH)} already exists. Pass --force to overwrite it.`);
     const { config, notes } = detectInit();
@@ -1463,7 +1540,7 @@ function main() {
   }
 
   const config = loadConfig();
-  const built = build(config);
+  const built = await build(config);
   const tokensPath = resolve(ROOT, config.output ?? 'design/tokens.json');
   const designPath = resolve(ROOT, config.designMd?.file ?? 'DESIGN.md');
   const tokensJson = JSON.stringify(built.tokens, null, 2) + '\n';
@@ -1567,7 +1644,7 @@ export { parseCss, resolveVars, evalCalc, simplifyCalc, parseColor, deltaE, toDi
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try {
-    process.exitCode = main();
+    process.exitCode = await main();
   } catch (e) {
     if (e instanceof TokenError) {
       console.error(`design-tokens: ${e.message}`);

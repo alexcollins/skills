@@ -10,6 +10,7 @@ value the code doesn't. `--init` writes a proposal; review every mapping before 
 - [Typography](#typography)
 - [Themes, fluid values and components](#themes-fluid-values-and-components)
 - [The sweep](#the-sweep)
+- [extend: a project's own semantic layer](#extend-a-projects-own-semantic-layer)
 - [Recipes by stack](#recipes-by-stack)
 - [Monorepos and non-Node projects](#monorepos-and-non-node-projects)
 
@@ -24,6 +25,7 @@ value the code doesn't. `--init` writes a proposal; review every mapping before 
 | `fontVars` | when fonts load at runtime | `{ "--font-geist-sans": "Geist Sans" }`. Family names the CSS can't know. `--check` fails if a listed variable is no longer mentioned anywhere in the source |
 | `sweep` | | Where to look for literals in markup. See [the sweep](#the-sweep) |
 | `extra` | | Values that live in code, not CSS: `[{ "name": "heroGradient", "file": "components/hero-canvas.tsx", "const": "GRADIENT" }]`. Must be a plain array or object literal |
+| `extend` | | A module that adds the project's own semantic groups to tokens.json. See [extend](#extend-a-projects-own-semantic-layer) |
 | `references` | | Extra files that *use* tokens (a theme.ts, a plugin), so `--report` doesn't call their tokens unused |
 | `output` | | Where tokens.json goes. Default `design/tokens.json` |
 | `designMd` | for DESIGN.md | The frontmatter mapping. Without it, only tokens.json is written |
@@ -67,6 +69,7 @@ Anywhere a mapping takes a value, it accepts:
 |---|---|---|
 | A custom property | `"--primary"` | Its resolved value in `:root` — through every `var()` chain and `calc()` |
 | A property in a mode | `"--primary@.dark"` | Its resolved value with `.dark` applied |
+| A Tailwind 3 theme value | `"tailwind:borderRadius.2xl"`, `"tailwind:spacing.6"` | That key in the fully resolved theme, through the project's own `resolveConfig`. For values that only exist in the Tailwind config. On Tailwind 4 the theme is CSS: map `--radius-2xl` instead |
 | A token reference | `"{colors.primary}"` | Components only: a reference the spec keeps as-is |
 | A literal | `"8px"`, `400` | Allowed, discouraged. A literal can drift; a mapping can't. Use it for facts the CSS genuinely doesn't carry (a font weight set in a component) |
 
@@ -164,6 +167,53 @@ A utility with its own category is reported there only (`rounded-[13px]` is a ra
 arbitrary value). Comments are blanked before sweeping so prose like "rounded corners" doesn't
 count. Hex colours written in code are reported by `--report` but never gated — a third-party logo
 colour is legitimate.
+
+## extend: a project's own semantic layer
+
+By default tokens.json holds what the generator parsed: `theme` (every custom property, resolved,
+per mode), `tailwind`, `literals`. When something already **consumes** tokens.json in a curated
+shape — a `/design-system` page reading `color.primitive`, a Figma sync, a native app — keep that
+shape with `extend` instead of hand-editing the output or keeping a second generator.
+
+```json
+{ "extend": "scripts/tokens.extend.mjs" }
+```
+
+```js
+// scripts/tokens.extend.mjs
+export default function tokens({ v, resolve, decl, distinct, tailwind }) {
+  return {
+    color: {
+      ground: v('--bg'),                       // { value: '#…', var: '--bg' }; throws if absent
+      text: v('--fg'),
+    },
+    radius: distinct(/rounded-\[(\d+)px\]/, Number),  // every rounded-[Npx] in the sweep
+    easing: { out: decl(':root', '--ease-out') },     // as written in the stylesheet
+    container: tailwind?.maxWidth?.['6xl'],           // Tailwind 3, fully resolved
+  };
+}
+```
+
+The default export receives:
+
+| Helper | Returns |
+|---|---|
+| `v(name)` | `{ value, var }` for a `:root` custom property as written. Throws if it isn't declared |
+| `root` | Every `:root` custom property, as written |
+| `resolve(value, mode?)` | `value` with every `var()` and `calc()` resolved, in `:root` or a mode |
+| `decl(selector, prop)` | The value of `prop` in the first rule for exactly `selector`. Throws if none |
+| `distinct(re, cast?)` | Sorted distinct values of `re`'s first group across the swept files |
+| `literal(file, name)` | A plain array or object literal assigned to `name` in `file` |
+| `tailwind` | The resolved Tailwind 3 theme, or `null` on Tailwind 4 |
+| `literals` | The sweep's distinct literals by category |
+| `fail(msg)` | Stop the build with a message naming the module |
+
+It may be async. What it returns is merged into tokens.json at the top level, so `--check` gates
+it like everything else. The generator's own keys (`theme`, `modes`, `scoped`, `tailwind`,
+`literals`, `sources`, `extra`, `$generated`) are reserved; returning one fails.
+
+Every helper throws rather than guessing, so a renamed variable breaks the build instead of
+publishing `undefined`. Don't catch those errors in the module.
 
 ## Recipes by stack
 

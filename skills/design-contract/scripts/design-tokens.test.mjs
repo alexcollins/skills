@@ -206,6 +206,47 @@ test('the prose is checked too: a stale token name or an invented hex fails', ()
   }
 });
 
+test('extend: a project assembles its own semantic layer, and it is gated too', () => {
+  const root = fixture();
+  try {
+    writeFileSync(
+      join(root, 'scripts-extend.mjs'),
+      `export default ({ v, decl, distinct, resolve }) => ({
+        color: { ground: v('--background'), action: { ...v('--primary'), resolved: resolve('var(--primary)') } },
+        type: { display: decl('.type-display', 'font-size') },
+        zUsed: distinct(/\\bz-(\\d+)\\b/, Number),
+      });\n`
+    );
+    const cfgPath = join(root, 'design/tokens.config.json');
+    const cfg = JSON.parse(readFileSync(cfgPath, 'utf8'));
+    cfg.extend = 'scripts-extend.mjs';
+    writeFileSync(cfgPath, JSON.stringify(cfg));
+    assert.equal(run(root).status, 0);
+    const t = JSON.parse(readFileSync(join(root, 'design/tokens.json'), 'utf8'));
+    assert.deepEqual(t.color.ground, { value: '#ffffff', var: '--background' });
+    assert.equal(t.color.action.resolved, 'oklch(0.205 0 0)');
+    assert.equal(t.type.display, 'var(--heading)');
+    assert.deepEqual(t.zUsed, [10]);
+    assert.ok(t.modes && t.literals, 'the generated sections are still there');
+    assert.equal(run(root, '--check').status, 0);
+
+    /* The curated layer drifts like anything else. */
+    const css = readFileSync(join(root, 'src/app/globals.css'), 'utf8');
+    writeFileSync(join(root, 'src/app/globals.css'), css.replace('--background: #ffffff', '--background: #fefefe'));
+    const r = run(root, '--check');
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /color\.ground\.value: #ffffff → #fefefe/);
+
+    /* It can't overwrite what the generator owns, and a missing var fails. */
+    writeFileSync(join(root, 'scripts-extend.mjs'), `export default () => ({ modes: {} });\n`);
+    assert.match(run(root).stderr, /returned "modes", which the generator owns/);
+    writeFileSync(join(root, 'scripts-extend.mjs'), `export default ({ v }) => ({ x: v('--gone') });\n`);
+    assert.match(run(root).stderr, /--gone is not declared in :root/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('a mapping to a token that does not exist fails loudly instead of guessing', () => {
   const root = fixture();
   try {

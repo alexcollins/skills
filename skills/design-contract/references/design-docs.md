@@ -82,3 +82,16 @@ Written by `scripts/capture.mjs`. It says what the captures are, when they were 
 re-take them, and how to read a diff: compare against the capture at the same width, look first at
 spacing rhythm and type, then colour; a change you didn't intend is a regression even if it looks
 fine.
+
+The script regenerates it only while its first line is the generated marker. Delete that line to
+make the README yours — worth doing once the project has something specific to say (a page left
+out on purpose, an animation that has to be frozen). An existing hand-written README is never
+touched. `capture.json` is likewise written once, on the first run; a later one-route run doesn't
+shrink it.
+
+**Capture twice before trusting a baseline.** The script scrolls each page to the bottom and back
+so lazy and scroll-revealed content renders. Anything driven by scroll position or scroll speed —
+a parallax hero, a canvas that redraws on `scroll`, a reveal that isn't `once` — can land in a
+different state each run. If two runs differ, find the component and say so in the README (or in
+DESIGN.md → Known inconsistencies when it's a reduced-motion gap); don't commit a baseline that
+changes on its own.

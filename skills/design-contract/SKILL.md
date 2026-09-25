@@ -124,6 +124,10 @@ by hand — `--init` guesses; you decide. The mapping is the one place judgement
 - the theme people actually see is the one the frontmatter publishes — `"mode": ".dark"` for a
   dark-first product; other themes live in tokens.json and the Colors prose
 - a fluid `clamp()` is published as its desktop bound
+- **Adopt:** if the project already has a token script, grep for what reads its output (a
+  `/design-system` page, a Figma sync). Keep that shape with an `extend` module (config.md) and
+  diff old against new output before deleting the old script. A consumer silently reading
+  `undefined` is the failure this skill exists to prevent
 
 Then:
 
@@ -180,9 +184,11 @@ node scripts/capture.mjs --base http://localhost:3000 home=/ about=/about pricin
 ```
 
 `scripts/capture.mjs` (copy it alongside the generator) writes `design/references/<name>-<width>`
-at 1440 and 390 with reduced motion, plus the README that says how to re-take them. Capture every
-page template, not every page. If the app cannot run here, say so and leave the README with the
-command; do not skip silently.
+at 1440 and 390 with reduced motion, plus the README that says how to re-take them (never over a
+README someone wrote by hand). Capture every page template, not every page, and capture twice: a
+page that differs between runs has something scroll-driven in it, which goes in the README rather
+than into a baseline that changes on its own. If the app cannot run here, say so and leave the
+README with the command; do not skip silently.
 
 A live `/design-system` route (every token, type step and component rendered with the real
 components) is worth building when the project has more than a handful of components. It is an

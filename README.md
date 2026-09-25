@@ -32,6 +32,9 @@ opposite rule: **values are parsed, never typed.**
 - **It audits with facts, not impressions.** `--report` counts distinct values per category, finds
   near-duplicate colours *within a theme* (OKLab ΔE), lists tokens with no static reference (aware of
   Tailwind 4 namespaces and dynamically composed names) and hex colours hard-coded in components.
+- **It fits a system that already exists.** If something already reads your tokens file in a
+  curated shape (a design-system page, a Figma sync), an `extend` module rebuilds that shape from
+  the parsed values — gated like everything else — so adopting doesn't break the consumer.
 - **It's honest.** Near-duplicates are recorded as Known inconsistencies, never silently merged —
   consolidating changes the design, and that's your call.
 - **It protects the brand from other skills.** A *Deliberate choices* section names the patterns
@@ -48,6 +51,9 @@ Three production codebases with nothing in common but the author: a Tailwind 3 s
 fluid type scale, `next/font` families and colour that exists only in canvas code; a Tailwind 4 +
 shadcn app with three themes (dark by default); and a Tailwind 4 + shadcn directory with its own
 token layer over shadcn's. Every output lints at 0 errors, 0 warnings.
+
+Not yet tried on a plain-CSS, SCSS or CSS-in-JS project. The parser reads any CSS custom
+properties, so it should work — issues from those stacks are welcome.
 
 ## Requirements
 
