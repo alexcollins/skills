@@ -8,19 +8,54 @@ npx skills add alexcollins/skills                     # choose from the list
 npx skills add alexcollins/skills --skill polish      # or just one
 ```
 
-## The flow
+## The order
+
+Use them in this order. Each step leaves a file the next one reads, so nothing depends on the chat
+surviving.
+
+### 0 · Once per repository
+
+| Step | Skill | Leaves behind |
+|---|---|---|
+| 1 | `agent-conventions` | AGENTS.md, a short CLAUDE.md, skills vendored in `.agents/skills`, the verifier |
+| 2 | `design-contract` — any repo with UI | DESIGN.md and tokens parsed from the code, a `tokens:check` gate |
+
+Everything after this reads those files: `polish` and `motion` follow DESIGN.md, `diff-review`
+checks against AGENTS.md, `spec` writes plans in the `agent-conventions` format.
+
+### 1 · Every feature
 
 ```
-grill  →  spec  →  build  →  diff-review
-  │         │        │            │
-  │         │        │            └─ standards and spec, judged apart (+ polish on UI)
-  │         │        └─ test-first at agreed seams, marks the phase Built
-  │         └─ docs/<feature>/PLAN.md: decisions, seams, vertical phases
-  └─ interview until nothing is assumed; keeps GLOSSARY.md and decisions current
+grill → spec → build → diff-review → retro
 ```
 
-Small change: `grill`, then `build`. No setup step, no issue tracker required — the plan is a file
-in the repository, in the same format `agent-conventions` uses for every feature.
+| Step | Skill | When | Leaves behind |
+|---|---|---|---|
+| 1 | `grill` | Always first. An idea, a request, a change you're unsure about | Confirmed decisions; `GLOSSARY.md` terms |
+| 2 | `spec` | The work needs more than one session | `docs/<feature>/PLAN.md`: decisions, seams, phases |
+| 3 | `build` | One phase per session; `/clear` between phases | Code and tests, the phase marked **Built.** |
+| 4 | `diff-review` | `build` runs it at the end; run it alone on any branch or PR | Findings on two axes, with `polish` on UI changes |
+| 5 | `retro` | After a session that went sideways | Better pointers, checks and rules for next time |
+
+**Small change:** `grill` → `build`. `build` still ends with `diff-review`.
+
+**Keep 1–2 in one context window**, so the spec is written from the same thinking as the grilling.
+Each `build` then starts fresh from the plan, which is why the plan is a file.
+
+### Detours — leave the flow, then come back
+
+| You're stuck on | Use | Then rejoin at |
+|---|---|---|
+| A question you can't settle on paper: does this state model hold, what should this look like | `prototype` | `grill` or `spec`, with the answer |
+| Facts you don't have: an API, a library, how something works | `research` | `grill`, with the cited file |
+| Whether and how something should move | `motion` | `build` |
+| A finished component that doesn't feel finished | `polish` | `diff-review` |
+| Something broken, flaky or slow | `debug` | `retro` (what would have caught it?) |
+| A codebase that fights every change | `architecture` | `grill` with the chosen candidate |
+| Moving the work to another tool, machine or session | `handoff` | wherever the handoff says |
+
+`debug` and `architecture` meet: when a bug can't be locked down by a test because there's no good
+seam, that's an `architecture` candidate.
 
 ## The set
 
