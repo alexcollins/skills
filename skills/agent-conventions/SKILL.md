@@ -61,6 +61,10 @@ files. Run this one first; they are made to fit together.
 7. **One copy of everything.** One copy of each rule (the others point at it), one copy of each
    skill (the others symlink to it).
 
+How to word any of it — pointers, steps, what to cut — is in
+[references/writing.md](references/writing.md). Read it before writing a skill or an instruction
+file.
+
 ## Workflow
 
 ### Phase 1 — Read the repository

@@ -65,8 +65,8 @@ repository-authored when its SKILL.md carries `metadata.author`.
 
 Each skill gets a line in CLAUDE.md (and AGENTS.md, for other agents) saying **when** to run it:
 
-> Run `/better-ui` on any new or changed component and clear every HIGH and MEDIUM finding.
-> Use `/emil-design-eng` to decide whether something should animate; `/animate` to build it.
+> Run `/polish` on any new or changed component and clear every HIGH and MEDIUM finding.
+> Use `/motion` to decide whether something should animate, and to build it.
 
 If a skill's defaults conflict with the project (it assumes a token the project deliberately
 doesn't define), say so beside it — the skill won't know.

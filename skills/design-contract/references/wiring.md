@@ -69,7 +69,7 @@ After changing the stylesheet or theme config, run `npm run tokens` and read the
 `npm run tokens:check` gates the build.
 ```
 
-If the project uses design skills (`better-ui`, `emil-design-eng`, `animate`, `impeccable`…), add
+If the project uses design skills (`polish`, `motion`, or third-party ones like `impeccable`), add
 a **Before shipping UI** line naming which to run and when — a skill nobody is told to invoke
 never runs.
 

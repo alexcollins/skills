@@ -12,7 +12,7 @@ every conversation, whether or not it's relevant. So it points instead of explai
    in AGENTS.md.
 3. **The rules broken most often** — the same five as AGENTS.md, in substance. One line each. The
    duplication is deliberate: whichever file gets read, the five get read.
-4. **Which skills to run, and when.** "Run `/better-ui` on any new or changed component and clear
+4. **Which skills to run, and when.** "Run `/polish` on any new or changed component and clear
    every HIGH and MEDIUM finding." A skill that isn't named here with a trigger doesn't run.
 5. **Verify** — the commands, one line.
 6. **Traps specific to Claude Code** — a slash command that assumes a token this repo doesn't
