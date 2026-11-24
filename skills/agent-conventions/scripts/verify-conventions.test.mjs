@@ -6,7 +6,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync, cpSync } fr
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 
-import { verify, computeSkillFolderHash } from './verify-conventions.mjs';
+import { verify, computeSkillFolderHash, computeSkillFolderHashes } from './verify-conventions.mjs';
 
 function repo(files) {
   const root = mkdtempSync(join(tmpdir(), 'conventions-'));
@@ -138,5 +138,33 @@ test('the hash is the skills CLI hash: path and content, sorted, symlinks skippe
   } finally {
     rmSync(a, { recursive: true, force: true });
     rmSync(b, { recursive: true, force: true });
+  }
+});
+
+test('a lock from either skills CLI hash format verifies, and the current one matches the CLI', async () => {
+  const root = repo({
+    'AGENTS.md': '# A',
+    'CLAUDE.md': 'See [AGENTS.md](./AGENTS.md).',
+    '.agents/skills/polish/SKILL.md': '---\nname: polish\n---\n',
+    '.agents/skills/polish/references/a.md': 'a\r\nb\r\n',
+  });
+  try {
+    const dir = join(root, '.agents/skills/polish');
+    const { current, legacy } = await computeSkillFolderHashes(dir);
+    assert.notEqual(current, legacy);
+    // Recorded by skills CLI 1.x for these exact files (path NUL length NUL content, CRLF → LF).
+    const { createHash } = await import('node:crypto');
+    const expected = createHash('sha256');
+    for (const [p, c] of [['SKILL.md', '---\nname: polish\n---\n'], ['references/a.md', 'a\nb\n']]) {
+      expected.update(p); expected.update('\0'); expected.update(String(Buffer.byteLength(c))); expected.update('\0'); expected.update(c);
+    }
+    assert.equal(current, expected.digest('hex'));
+    for (const hash of [current, legacy]) {
+      writeFileSync(join(root, 'skills-lock.json'), JSON.stringify({ version: 1, skills: { polish: { source: 'a/b', computedHash: hash } } }));
+      const f = await verify(root);
+      assert.ok(!f.some((x) => /no longer matches/.test(x.message)), `hash ${hash.slice(0, 8)} should verify`);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

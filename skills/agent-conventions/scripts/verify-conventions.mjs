@@ -32,12 +32,15 @@ import { createHash } from 'node:crypto';
 import { join, resolve, relative, dirname, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export const VERSION = '1.0.0';
+export const VERSION = '1.1.0';
 
-/* The skills CLI's own hash (vercel-labs/skills, src/local-lock.ts):
-   every regular file under the skill, sorted by relative path, path
-   then content fed to one SHA-256. Symlinked files are not followed. */
-export async function computeSkillFolderHash(skillDir) {
+/* The skills CLI's own hash (vercel-labs/skills). Every regular file under the
+   skill, symlinks not followed, .git and node_modules skipped. Two formats exist:
+   - current: sorted by path bytes; per file path, NUL, byte length, NUL, content,
+     with CRLF normalised to LF in text files.
+   - legacy (CLI releases before late 2026): sorted by path, path then content.
+   A lock written by either release verifies. */
+async function collectSkillFiles(skillDir) {
   const files = [];
   async function collect(dir) {
     const entries = await readdir(dir, { withFileTypes: true });
@@ -54,13 +57,41 @@ export async function computeSkillFolderHash(skillDir) {
     );
   }
   await collect(skillDir);
-  files.sort((a, b) => a.rel.localeCompare(b.rel));
-  const hash = createHash('sha256');
-  for (const f of files) {
-    hash.update(f.rel);
-    hash.update(f.content);
+  return files;
+}
+
+function normaliseLineEndings(buf) {
+  if (buf.includes(0) || !buf.includes('\r\n')) return buf;
+  return Buffer.from(buf.toString('latin1').replaceAll('\r\n', '\n'), 'latin1');
+}
+
+export async function computeSkillFolderHashes(skillDir) {
+  const files = await collectSkillFiles(skillDir);
+
+  const current = createHash('sha256');
+  const byBytes = files
+    .map((f) => ({ path: Buffer.from(f.rel, 'utf8'), content: normaliseLineEndings(f.content) }))
+    .sort((a, b) => Buffer.compare(a.path, b.path));
+  for (const { path, content } of byBytes) {
+    current.update(path);
+    current.update('\0');
+    current.update(String(content.length));
+    current.update('\0');
+    current.update(content);
   }
-  return hash.digest('hex');
+
+  const legacy = createHash('sha256');
+  for (const f of [...files].sort((a, b) => a.rel.localeCompare(b.rel))) {
+    legacy.update(f.rel);
+    legacy.update(f.content);
+  }
+
+  return { current: current.digest('hex'), legacy: legacy.digest('hex') };
+}
+
+/* The hash the current skills CLI would record. */
+export async function computeSkillFolderHash(skillDir) {
+  return (await computeSkillFolderHashes(skillDir)).current;
 }
 
 /* Markdown links that are paths, not URLs or anchors. */
@@ -190,8 +221,8 @@ export async function verify(root) {
         }
       }
       if (entry.computedHash) {
-        const actual = await computeSkillFolderHash(dir);
-        if (actual !== entry.computedHash)
+        const { current, legacy } = await computeSkillFolderHashes(dir);
+        if (entry.computedHash !== current && entry.computedHash !== legacy)
           add('warning', 'skills-lock', `${name} no longer matches its pinned hash — edited locally, or updated without the lock. If intended, re-add it with npx skills so the lock records the new content.`, `.agents/skills/${name}`);
       }
     }
