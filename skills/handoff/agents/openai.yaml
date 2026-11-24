@@ -1,0 +1,5 @@
+interface:
+  display_name: "Handoff"
+  short_description: "Compress this session for a fresh agent"
+policy:
+  allow_implicit_invocation: false

@@ -1,0 +1,5 @@
+interface:
+  display_name: "Spec"
+  short_description: "Write the agreed plan to docs/<feature>/PLAN.md"
+policy:
+  allow_implicit_invocation: false

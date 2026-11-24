@@ -1,22 +1,61 @@
 # skills
 
-Two agent skills for keeping a codebase's design and its agent instructions true — installable into
-Claude Code, Codex, Cursor, Copilot, Gemini, OpenCode and anything else that reads
-[Agent Skills](https://agentskills.io).
+My agent skills — one small set that covers the way I build, installable into Claude Code, Codex,
+Cursor, Copilot, Gemini, OpenCode and anything else that reads [Agent Skills](https://agentskills.io).
 
 ```bash
-npx skills add alexcollins/skills
+npx skills add alexcollins/skills                     # choose from the list
+npx skills add alexcollins/skills --skill polish      # or just one
 ```
 
-| Skill | What it does |
-|---|---|
-| [**design-contract**](skills/design-contract/SKILL.md) | Turns the design a codebase already has into a [DESIGN.md](https://github.com/google-labs-code/design.md) whose tokens are **parsed from the code**, never typed — plus `design/tokens.json`, a component inventory that says when *not* to use each component, layout and motion references, reference captures at 1440 and 390, and a `tokens:check` gate that **fails the build** when code and docs disagree. |
-| [**agent-conventions**](skills/agent-conventions/SKILL.md) | One arrangement every agent reads the same way: AGENTS.md as the canonical instructions, a short CLAUDE.md that points to it, skills vendored once and symlinked, `skills-lock.json` pins, decision records that say what was *not* built and why — and a verifier that catches broken links, drifted skill copies and unpinned skills. |
+## The flow
 
-They're built to be used together — `agent-conventions` first, then `design-contract` for any repo
-with UI — and each works alone.
+```
+grill  →  spec  →  build  →  diff-review
+  │         │        │            │
+  │         │        │            └─ standards and spec, judged apart (+ polish on UI)
+  │         │        └─ test-first at agreed seams, marks the phase Built
+  │         └─ docs/<feature>/PLAN.md: decisions, seams, vertical phases
+  └─ interview until nothing is assumed; keeps GLOSSARY.md and decisions current
+```
 
-## Why another design skill
+Small change: `grill`, then `build`. No setup step, no issue tracker required — the plan is a file
+in the repository, in the same format `agent-conventions` uses for every feature.
+
+## The set
+
+| | Skill | What it does |
+|---|---|---|
+| **Workflow** | [**grill**](skills/grill/SKILL.md) | Interviews you round by round until every decision is made and confirmed. In a repo, it writes the project's language to `GLOSSARY.md` and real trade-offs to the plan as they land. |
+| | [**spec**](skills/spec/SKILL.md) | Writes what was agreed into `docs/<feature>/PLAN.md` — decisions, the seams to test at, and phases cut as tracer bullets that each ship alone. |
+| | [**build**](skills/build/SKILL.md) | Red, then green, one behaviour at a time at the agreed seams. Updates the plan in the same change, reviews, commits. Runs independent phases in parallel worktrees when it can. |
+| | [**diff-review**](skills/diff-review/SKILL.md) | Reviews a diff on two axes kept apart — the repo's written standards (plus a short smell list) and the spec — so one can't hide the other. |
+| **Engineering** | [**debug**](skills/debug/SKILL.md) | No theories until there's one command that goes red on this exact bug. Then shrink, hypothesise, probe, fix behind a regression test. |
+| | [**architecture**](skills/architecture/SKILL.md) | Finds shallow, tangled, untestable modules and designs deep ones, with a fixed vocabulary and a design-it-twice pattern. |
+| | [**prototype**](skills/prototype/SKILL.md) | Throwaway code for one question: a clickable HTML state model, or radically different UI variants on one route. |
+| | [**research**](skills/research/SKILL.md) | A background agent that reads primary sources and leaves one cited file. |
+| **Design** | [**design-contract**](skills/design-contract/SKILL.md) | A [DESIGN.md](https://github.com/google-labs-code/design.md) whose tokens are **parsed from the code**, never typed, and a `tokens:check` gate that **fails the build** when code and docs disagree. |
+| | [**polish**](skills/polish/SKILL.md) | The details that make UI feel finished — radii, alignment, surfaces, icons, states, touch — reviewed inside the project's design contract, with a Block or Approve verdict. |
+| | [**motion**](skills/motion/SKILL.md) | Whether to animate at all, then the right tool, properties, curve, duration, exit and reduced motion — using the project's own tokens. |
+| **Agents** | [**agent-conventions**](skills/agent-conventions/SKILL.md) | AGENTS.md as the canonical instructions, a short CLAUDE.md, skills vendored once and pinned, decision records, and a verifier that catches drift. |
+| | [**handoff**](skills/handoff/SKILL.md) | Compresses a session into a file a fresh agent can start from. |
+| | [**retro**](skills/retro/SKILL.md) | After a session, fixes the environment rather than the code: pointers, checks, review rules, steering bloat. |
+
+## How they're written
+
+- **One way to do each thing.** Where the originals offered a range, these pick a value. Where two
+  skills overlapped, they merged.
+- **The project wins.** `polish` and `motion` read `DESIGN.md` and the project's tokens first; their
+  defaults fill only the gaps, and they never reference a token the project doesn't define.
+- **Files over services.** Plans, decisions and the glossary live in the repository, where every
+  agent and every session can read them.
+- **Facts are the agent's job, decisions are yours.** Skills look things up themselves and ask only
+  for what you have to decide.
+
+Several are rewrites of skills by Matt Pocock, Emil Kowalski and Jakub Krehel — see
+[CREDITS.md](CREDITS.md).
+
+## Why design-contract
 
 Most design-doc skills have an agent read the code and *write down* what it sees. That document is
 right on the day and wrong a month later, and nothing notices. `design-contract` is built around the
@@ -45,7 +84,7 @@ opposite rule: **values are parsed, never typed.**
   as their bound with the fluid range kept as a comment, and colours use Material 3 role names the
   linter recognises as families.
 
-## Tested on
+## design-contract: tested on
 
 Three production codebases with nothing in common but the author: a Tailwind 3 site with a custom
 fluid type scale, `next/font` families and colour that exists only in canvas code; a Tailwind 4 +
@@ -57,13 +96,15 @@ properties, so it should work — issues from those stacks are welcome.
 
 ## Requirements
 
-Node 18+. No dependencies. Tailwind 3 configs resolve through the project's own `tailwindcss`;
-reference captures use the project's Playwright if it has one.
+Most skills are plain Markdown. The scripts in `design-contract` and `agent-conventions` need
+Node 18+ and no dependencies; Tailwind 3 configs resolve through the project's own `tailwindcss`,
+and reference captures use the project's Playwright if it has one.
 
 ## Development
 
 ```bash
-npm test     # node --test over both skills' scripts
+npm test       # the scripts' tests, then the skill check
+npm run check  # every SKILL.md: frontmatter, name, description length, links
 ```
 
 ## License

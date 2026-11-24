@@ -3,14 +3,24 @@
   "notGrouped": "bottom",
   "groupings": [
     {
+      "title": "Workflow",
+      "description": "Idea to shipped code in four steps: grill, spec, build, diff-review.",
+      "skills": ["grill", "spec", "build", "diff-review"]
+    },
+    {
+      "title": "Engineering",
+      "description": "Debugging, architecture, throwaway prototypes and primary-source research.",
+      "skills": ["debug", "architecture", "prototype", "research"]
+    },
+    {
       "title": "Design",
-      "description": "A DESIGN.md whose tokens are parsed from the code and enforced by the build.",
-      "skills": ["design-contract"]
+      "description": "A design contract enforced by the build, a polish review, and motion that feels right.",
+      "skills": ["design-contract", "polish", "motion"]
     },
     {
       "title": "Agents",
-      "description": "AGENTS.md, CLAUDE.md, vendored skills and decision records that every agent reads the same way.",
-      "skills": ["agent-conventions"]
+      "description": "One arrangement every agent reads, session handoffs, and retros that improve the environment.",
+      "skills": ["agent-conventions", "handoff", "retro"]
     }
   ]
 }

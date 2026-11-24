@@ -1,11 +1,12 @@
 {
   "name": "@alexcollins/skills",
   "private": true,
-  "description": "Agent skills: design-contract and agent-conventions",
+  "description": "Agent skills: a small workflow from idea to shipped code, design review and motion, and the conventions that keep a repository agent-ready",
   "license": "MIT",
   "type": "module",
   "engines": { "node": ">=18" },
   "scripts": {
-    "test": "node --test skills/design-contract/scripts/design-tokens.test.mjs skills/agent-conventions/scripts/verify-conventions.test.mjs"
+    "test": "node --test skills/design-contract/scripts/design-tokens.test.mjs skills/agent-conventions/scripts/verify-conventions.test.mjs && node scripts/check-skills.mjs",
+    "check": "node scripts/check-skills.mjs"
   }
 }
