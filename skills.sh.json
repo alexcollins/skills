@@ -14,7 +14,7 @@
     },
     {
       "title": "Design",
-      "description": "A design contract enforced by the build, a polish review, and motion that feels right.",
+      "description": "DESIGN.md, DTCG tokens and a preview page parsed from the code and gated by the build; a polish review; motion that feels right.",
       "skills": ["design-contract", "polish", "motion"]
     },
     {

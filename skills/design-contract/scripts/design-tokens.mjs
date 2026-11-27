@@ -3,16 +3,17 @@
    design-tokens.mjs — part of the design-contract skill
    https://github.com/alexcollins/skills/tree/main/skills/design-contract
 
-   Reads the implementation and writes two things from it:
+   Reads the implementation and writes three things from it:
 
-     design/tokens.json      a complete, machine-readable mirror of every
-                             design value the code actually defines
      DESIGN.md frontmatter   the token block of the DESIGN.md spec
-                             (github.com/google-labs-code/design.md),
-                             so the part of DESIGN.md that tools parse
-                             can never disagree with the code
+                             (github.com/google-labs-code/design.md):
+                             every theme, type role, radius, spacing
+                             value, motion token and component
+     design/tokens.json      the same tokens and the ones the spec has
+                             no section for, in the W3C DTCG format
+     design/preview.html     the system rendered, with DESIGN.md's body
 
-   Nothing in either file is hand-written. The MAPPING — which custom
+   Nothing in any of them is hand-written. The MAPPING — which custom
    property is "primary", which class is "headline-lg" — is authored
    once in design/tokens.config.json, because that is a judgement. The
    VALUES are always parsed, because that is a fact. If a mapped source
@@ -46,7 +47,7 @@ import { dirname, join, relative, resolve, extname, sep } from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 
-export const VERSION = '1.1.0';
+export const VERSION = '2.0.0';
 
 /* ── CLI ─────────────────────────────────────────────────────────── */
 
@@ -913,57 +914,166 @@ function checkResolved(v, raw, where) {
   return v;
 }
 
+/* ── Themes ──────────────────────────────────────────────────────────
+   designMd.themes names the themes people can see, default first:
+     { ":root": "light", ".dark": "dark" }
+   The default theme is published whole at the top level, so every
+   {colors.x} reference resolves and an agent reads the theme people
+   see first. Each other theme is a group holding only the colours it
+   overrides — the spec's grouped shape for adaptive themes. */
+
+function themeList(d) {
+  if (d.modes) fail('designMd.modes was replaced by designMd.themes in 2.0: { ":root": "light", ".dark": "dark" }, default theme first');
+  if (d.themes) {
+    const list = Object.entries(d.themes).map(([selector, name]) => ({ selector, name }));
+    if (!list.length) fail('designMd.themes is empty');
+    for (const t of list) if (!/^[a-z][\w-]*$/.test(t.name)) fail(`designMd.themes: "${t.name}" is not a usable group name (lowercase, no spaces)`);
+    return list;
+  }
+  return [{ selector: d.mode ?? ':root', name: null }];
+}
+
+function themedModel(baseModel, selector) {
+  if (selector !== ':root') baseModel.scope(selector); /* throws if the selector isn't a mode */
+  return {
+    ...baseModel,
+    resolveIn: (v, m) => baseModel.resolveIn(v, m ?? selector),
+    scope: (m) => baseModel.scope(m ?? selector),
+  };
+}
+
+/* Custom properties the project itself declares (not Tailwind's
+   defaults, not Tailwind's internal --tw-* plumbing). */
+function ownVars(model) {
+  const names = new Set();
+  for (const k of model.rootKeys) for (const n of Object.keys(model.modes[k])) names.add(n);
+  for (const t of Object.values(model.theme)) for (const n of Object.keys(t)) names.add(n);
+  return [...names].filter((n) => !n.startsWith('--tw-'));
+}
+
+const AUTO = {
+  colors: { test: () => true, name: (n) => n.replace(/^--/, '').replace(/^color-/, '') },
+  rounded: { test: (n) => /^--radius(-[\w-]+)?$/.test(n), name: (n) => n.replace(/^--radius-?/, '') || 'default' },
+  spacing: { test: (n) => /^--(space|spacing)(-[\w-]+)?$/.test(n), name: (n) => n.replace(/^--(space|spacing)-?/, '') || 'unit' },
+};
+
 function buildFrontmatter(config, baseModel, tw3) {
   const d = config.designMd;
   if (!d) return null;
-  /* The unsuffixed tokens are the theme people actually see. For a
-     dark-first product (<html class="dark">) that is .dark, not :root;
-     the other themes are published with a suffix via `modes`. */
-  const base = d.mode ?? ':root';
-  if (base !== ':root') baseModel.scope(base); /* throws if the mode doesn't exist */
-  const model = {
-    ...baseModel,
-    resolveIn: (v, m) => baseModel.resolveIn(v, m ?? base),
-    scope: (m) => baseModel.scope(m ?? base),
-  };
+  const themes = themeList(d);
+  const models = themes.map((t) => themedModel(baseModel, t.selector));
+  const model = models[0];
   const fm = { version: 'alpha', name: d.name ?? config.name };
   if (!fm.name) fail('designMd.name (or config.name) is required');
   if (d.description ?? config.description) fm.description = d.description ?? config.description;
   if (d.omitted?.length) fm.omitted = d.omitted;
-
-  const modeSuffix = d.modes ?? {};
-  if (d.colors) {
-    fm.colors = {};
-    for (const [name, raw] of Object.entries(d.colors)) {
-      const v = mapValue(model, raw, `colors.${name}`, tw3);
-      if (!isColor(v)) fail(`colors.${name}: ${raw} resolved to "${v}", which is not a colour`);
-      fm.colors[name] = v;
-    }
-    for (const [mode, suffix] of Object.entries(modeSuffix)) {
-      if (mode === base) continue;
-      for (const [name, raw] of Object.entries(d.colors)) {
-        if (typeof raw !== 'string' || !raw.startsWith('--') || raw.includes('@')) continue;
-        const v = checkResolved(model.resolveIn(`var(${raw})`, mode), raw, `colors.${name}@${mode}`);
-        if (v !== fm.colors[name]) fm.colors[`${name}-${suffix}`] = v;
-      }
-    }
-  }
   const comments = {};
   const fluid = d.fluid ?? 'max';
   if (!['max', 'min'].includes(fluid)) fail(`designMd.fluid must be "max" or "min", not "${fluid}"`);
+
+  /* With "all": true, every value of a kind the stylesheets declare is
+     published, named after its custom property; the mapping only adds
+     role names (primary, headline-lg) on top. A variable that already
+     has a role isn't published twice. */
+  const all = d.all === true;
+  const mapped = (group) => new Set(Object.values(d[group] ?? {}).filter((v) => typeof v === 'string' && v.startsWith('--')).map((v) => v.split('@')[0]));
+  const autoEntries = (group) => {
+    if (!all) return [];
+    const taken = mapped(group);
+    const roles = new Set(Object.keys(d[group] ?? {}));
+    /* A variable that only points at another (Tailwind 4's
+       --color-x: var(--x)) is plumbing, not a second token. */
+    const declared = (n) => {
+      for (const k of baseModel.rootKeys) if (n in baseModel.modes[k]) return baseModel.modes[k][n];
+      for (const t of Object.values(baseModel.theme)) if (n in t) return t[n];
+      return '';
+    };
+    return ownVars(baseModel)
+      .filter((n) => AUTO[group].test(n) && !taken.has(n) && !/^var\(--[\w-]+\)$/.test(String(declared(n)).trim()))
+      .sort()
+      .map((n) => [AUTO[group].name(n), n])
+      .filter(([name]) => !roles.has(name));
+  };
+
+  /* colours */
+  const colorEntries = [...Object.entries(d.colors ?? {}), ...autoEntries('colors')];
+  if (colorEntries.length) {
+    fm.colors = {};
+    const groups = {};
+    for (const [name, raw] of colorEntries) {
+      const auto = !(name in (d.colors ?? {}));
+      const values = [];
+      for (const m of models) {
+        let v;
+        try {
+          v = mapValue(m, raw, `colors.${name}`, tw3);
+        } catch (e) {
+          if (auto) { v = null; } else throw e;
+        }
+        if (v == null || !isColor(v)) {
+          if (auto) { values.length = 0; break; }
+          fail(`colors.${name}: ${raw} resolved to "${v}", which is not a colour`);
+        }
+        values.push(v);
+      }
+      if (!values.length) continue; /* an auto-collected variable that isn't a colour */
+      fm.colors[name] = values[0];
+      themes.forEach((t, i) => {
+        if (i > 0 && values[i] !== values[0]) (groups[t.name] ??= {})[name] = values[i];
+      });
+    }
+    for (const t of themes) if (t.name && groups[t.name]) {
+      if (t.name in fm.colors) fail(`colors: the theme name "${t.name}" is also a colour name; rename one`);
+      fm.colors[t.name] = groups[t.name];
+    }
+    if (!Object.keys(fm.colors).length) delete fm.colors;
+  }
+
   if (d.typography) {
     fm.typography = {};
     for (const [name, spec] of Object.entries(d.typography)) fm.typography[name] = typographyEntry(model, tw3, spec, name, fluid, comments);
   }
+
   for (const group of ['rounded', 'spacing']) {
-    if (!d[group]) continue;
+    const entries = [...Object.entries(d[group] ?? {}), ...autoEntries(group)];
+    if (!entries.length) continue;
     fm[group] = {};
-    for (const [name, raw] of Object.entries(d[group])) {
-      let v = toDimension(mapValue(model, raw, `${group}.${name}`, tw3), `${group}.${name}`, fluid, comments);
+    for (const [name, raw] of entries) {
+      const auto = !(name in (d[group] ?? {}));
+      let v;
+      try {
+        v = toDimension(mapValue(model, raw, `${group}.${name}`, tw3), `${group}.${name}`, fluid, comments);
+      } catch (e) {
+        if (auto) continue;
+        throw e;
+      }
       if (typeof v === 'string' && /^-?\d*\.?\d+$/.test(v)) v = Number(v);
+      if (auto && !(typeof v === 'number' || /^-?\d*\.?\d+(px|rem|em)$/.test(v))) continue;
       fm[group][name] = v;
     }
+    if (!Object.keys(fm[group]).length) delete fm[group];
   }
+
+  if (d.motion) {
+    fm.motion = {};
+    for (const [name, spec] of Object.entries(d.motion)) {
+      if (!spec || typeof spec !== 'object') fail(`motion.${name} must be an object: { "duration": "--duration-fast", "timingFunction": "--ease-out" }`);
+      const entry = {};
+      for (const [prop, raw] of Object.entries(spec)) {
+        if (!['duration', 'delay', 'timingFunction'].includes(prop)) fail(`motion.${name}.${prop} is not a DESIGN.md motion property (duration, delay, timingFunction)`);
+        let v = String(mapValue(model, raw, `motion.${name}.${prop}`, tw3)).trim();
+        if (prop !== 'timingFunction') {
+          const ms = toMs(v);
+          if (ms == null) fail(`motion.${name}.${prop}: ${raw} resolved to "${v}", which is not a duration`);
+          v = `${ms}ms`;
+        }
+        entry[prop] = v;
+      }
+      if (!entry.duration) fail(`motion.${name} needs a duration`);
+      fm.motion[name] = entry;
+    }
+  }
+
   if (d.components) {
     fm.components = {};
     for (const [comp, props] of Object.entries(d.components)) {
@@ -972,18 +1082,27 @@ function buildFrontmatter(config, baseModel, tw3) {
         fm.components[comp][prop] = typeof raw === 'string' && /^\{[\w.-]+\}$/.test(raw) ? raw : mapValue(model, raw, `components.${comp}.${prop}`, tw3);
       }
     }
-    /* Every {ref} must land on something this block defines. */
     for (const [comp, props] of Object.entries(fm.components))
       for (const [prop, v] of Object.entries(props)) {
         if (typeof v !== 'string' || !v.startsWith('{')) continue;
-        const path = v.slice(1, -1).split('.');
-        let node = fm;
-        for (const p of path) node = node?.[p];
-        if (node == null) fail(`components.${comp}.${prop}: ${v} does not resolve to a token in this frontmatter`);
+        if (lookupRef(fm, v) == null) fail(`components.${comp}.${prop}: ${v} does not resolve to a token in this frontmatter`);
       }
   }
   Object.defineProperty(fm, '$comments', { value: comments, enumerable: false });
+  Object.defineProperty(fm, '$themes', { value: themes, enumerable: false });
   return fm;
+}
+
+function lookupRef(fm, ref) {
+  let node = fm;
+  for (const p of ref.replace(/^\{|\}$/g, '').split('.')) node = node?.[p];
+  return node;
+}
+
+function toMs(v) {
+  const m = String(v).trim().match(/^(-?\d*\.?\d+)(ms|s)$/);
+  if (!m) return null;
+  return Math.round(parseFloat(m[1]) * (m[2] === 's' ? 1000 : 1) * 1000) / 1000;
 }
 
 /* A deliberately small YAML writer: maps, lists, strings, numbers,
@@ -1037,67 +1156,216 @@ const sortObj = (o) =>
   );
 
 /* ══════════════════════════════════════════════════════════════════
-   extend: a project's own semantic layer
+   design/tokens.json — the W3C Design Tokens format (DTCG 2025.10)
 
-   A mature design system often has consumers of tokens.json that want
-   a curated shape — color.primitive, spacing.rhythm, motion.easing —
-   not the raw per-mode map. config.extend names a module whose default
-   export assembles that shape from the parsed model, with the same
-   fail-loudly helpers the generator uses. Its output is merged into
-   tokens.json at the top level and gated by --check like everything
-   else, so the curated layer can't drift either.
+   Written from the frontmatter, so it can't say anything DESIGN.md
+   doesn't, plus the kinds of token the DESIGN.md schema has no place
+   for (durations, easings, shadows, z-index, breakpoints), parsed from
+   the same stylesheets. Theme groups stay nested. Colours use the same
+   shape Google's design.md CLI exports. The generator's own memory —
+   sources and the sweep's literals, which --check gates — lives under
+   $extensions, where DTCG tools expect vendor data.
    ══════════════════════════════════════════════════════════════════ */
 
-const RESERVED = new Set(['$generated', 'sources', 'modes', 'theme', 'scoped', 'tailwind', 'literals', 'extra']);
+const DTCG_SCHEMA = 'https://www.designtokens.org/schemas/2025.10/format.json';
+const EXT = 'design-contract';
+const round = (n, d = 3) => Math.round(n * 10 ** d) / 10 ** d;
 
-async function runExtend(config, model, tw3, swept) {
-  if (!config.extend) return {};
-  const file = resolve(ROOT, config.extend);
-  if (!existsSync(file)) fail(`config.extend names ${config.extend}, which does not exist`);
-  const mod = await import(pathToFileURL(file).href);
-  if (typeof mod.default !== 'function') fail(`${config.extend} must export a default function`);
-
-  const root = Object.assign({}, ...model.rootKeys.map((k) => model.modes[k]));
-  const helpers = {
-    /** A :root custom property as written: { value, var }. Throws if absent. */
-    v: (name) => {
-      if (!(name in root)) fail(`${config.extend}: ${name} is not declared in :root`);
-      return { value: root[name], var: name };
-    },
-    /** Every :root custom property, as written. */
-    root: { ...root },
-    /** A value with every var() and calc() resolved, in :root or a mode. */
-    resolve: (value, mode) => model.resolveIn(value, mode),
-    /** The first rule for exactly `selector` that declares `prop`. Throws if none. */
-    decl: (selector, prop) => {
-      const hits = model.rules.filter((r) => r.selector === selector);
-      if (!hits.length) fail(`${config.extend}: selector ${selector} not found in the stylesheets`);
-      for (const r of hits) {
-        const d = r.decls.find(([p]) => p === prop);
-        if (d) return d[1];
-      }
-      fail(`${config.extend}: ${selector} declares no ${prop}`);
-    },
-    /** Distinct matches of group 1 of `re` across the swept files, sorted. */
-    distinct: (re, cast = (x) => x) =>
-      [...new Set([...swept.corpus.matchAll(new RegExp(re.source, re.flags.includes('g') ? re.flags : re.flags + 'g'))].map((m) => m[1]))]
-        .map(cast)
-        .sort((a, b) => (typeof a === 'number' ? a - b : String(a).localeCompare(String(b)))),
-    /** A plain array or object literal assigned to `name` in `file`. */
-    literal: (file, name) => literalFromCode(file, name),
-    /** The Tailwind 3 theme, fully resolved (null on Tailwind 4). */
-    tailwind: tw3?.full ?? null,
-    /** The sweep's distinct literals. */
-    literals: swept.literals,
-    fail: (msg) => fail(`${config.extend}: ${msg}`),
+/* OKLab back to sRGB — the inverse of fromSrgb, for every format parseColor reads. */
+function srgbOf(input) {
+  const c = parseColor(input);
+  if (!c) return null;
+  const l = (c.L + 0.3963377774 * c.a + 0.2158037573 * c.b) ** 3;
+  const m = (c.L - 0.1055613458 * c.a - 0.0638541728 * c.b) ** 3;
+  const s = (c.L - 0.0894841775 * c.a - 1.291485548 * c.b) ** 3;
+  const lin = [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+  ];
+  const enc = (x) => {
+    const v = x <= 0.0031308 ? 12.92 * x : 1.055 * x ** (1 / 2.4) - 0.055;
+    return Math.min(1, Math.max(0, v));
   };
-  const out = await mod.default(helpers);
-  if (!out || typeof out !== 'object' || Array.isArray(out)) fail(`${config.extend} must return an object`);
-  for (const k of Object.keys(out)) if (RESERVED.has(k)) fail(`${config.extend} returned "${k}", which the generator owns. Rename it.`);
+  const rgb = lin.map(enc);
+  const hex2 = (x) => Math.round(x * 255).toString(16).padStart(2, '0');
+  const alpha = round(c.alpha ?? 1);
+  return { rgb, alpha, hex: `#${rgb.map(hex2).join('')}${alpha < 1 ? hex2(alpha) : ''}` };
+}
+
+function dtcgColor(v) {
+  const c = srgbOf(v);
+  if (!c) fail(`tokens.json: "${v}" is not a colour the generator can convert`);
+  return { colorSpace: 'srgb', components: c.rgb.map((x) => round(x)), ...(c.alpha < 1 ? { alpha: c.alpha } : {}), hex: c.hex.slice(0, 7) };
+}
+
+/* DTCG dimensions are px or rem. em is relative to the font size, so it
+   is converted where that is known (typography) and read as rem elsewhere. */
+function dtcgDimension(v, fontPx) {
+  if (typeof v === 'number') return { value: v, unit: 'px' };
+  const m = String(v).match(/^(-?\d*\.?\d+)(px|rem|em)$/);
+  if (!m) return null;
+  const n = parseFloat(m[1]);
+  if (m[2] === 'em') return fontPx ? { value: round(n * fontPx), unit: 'px' } : { value: n, unit: 'rem' };
+  return { value: n, unit: m[2] };
+}
+const pxOf = (dim) => (dim ? (dim.unit === 'rem' ? dim.value * ROOT_PX : dim.value) : null);
+
+const NAMED_EASING = {
+  linear: [0, 0, 1, 1],
+  ease: [0.25, 0.1, 0.25, 1],
+  'ease-in': [0.42, 0, 1, 1],
+  'ease-out': [0, 0, 0.58, 1],
+  'ease-in-out': [0.42, 0, 0.58, 1],
+};
+function dtcgBezier(v) {
+  const s = String(v).trim();
+  if (NAMED_EASING[s]) return NAMED_EASING[s];
+  const m = s.match(/^cubic-bezier\(([^)]+)\)$/);
+  if (!m) return null;
+  const n = m[1].split(',').map((x) => parseFloat(x));
+  return n.length === 4 && n.every((x) => !Number.isNaN(x)) ? n : null;
+}
+
+function dtcgShadow(v) {
+  const layers = [];
+  let depth = 0;
+  let start = 0;
+  const s = String(v);
+  for (let i = 0; i <= s.length; i++) {
+    if (s[i] === '(') depth++;
+    else if (s[i] === ')') depth--;
+    else if ((s[i] === ',' && depth === 0) || i === s.length) {
+      layers.push(s.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  const out = [];
+  for (const layer of layers) {
+    if (!layer || layer === 'none') return null;
+    const inset = /\binset\b/.test(layer);
+    const rest = layer.replace(/\binset\b/, '').trim();
+    const colorMatch = rest.match(/(#[0-9a-f]{3,8}|(?:rgba?|hsla?|oklch|oklab)\([^)]*\)|\b(?:black|white|transparent)\b)/i);
+    if (!colorMatch) return null;
+    const lengths = rest.replace(colorMatch[0], '').trim().split(/\s+/).filter(Boolean).map((x) => dtcgDimension(x === '0' ? '0px' : x));
+    if (lengths.length < 2 || lengths.some((x) => !x)) return null;
+    const [offsetX, offsetY, blur = { value: 0, unit: 'px' }, spread = { value: 0, unit: 'px' }] = lengths;
+    out.push({ color: dtcgColor(colorMatch[0]), offsetX, offsetY, blur, spread, ...(inset ? { inset: true } : {}) });
+  }
+  return out.length === 1 ? out[0] : out;
+}
+
+function dtcgTypography(t) {
+  const fontSize = dtcgDimension(t.fontSize);
+  const value = {
+    fontFamily: String(t.fontFamily ?? 'inherit').split(',').map((f) => f.trim()).filter(Boolean),
+    ...(fontSize ? { fontSize } : {}),
+    fontWeight: t.fontWeight ?? 400,
+  };
+  if (value.fontFamily.length === 1) value.fontFamily = value.fontFamily[0];
+  if (t.letterSpacing != null) {
+    const ls = dtcgDimension(t.letterSpacing, pxOf(fontSize));
+    if (ls) value.letterSpacing = ls;
+  }
+  if (typeof t.lineHeight === 'number') value.lineHeight = t.lineHeight;
+  else if (t.lineHeight != null) {
+    const lh = pxOf(dtcgDimension(t.lineHeight, pxOf(fontSize)));
+    if (lh != null && pxOf(fontSize)) value.lineHeight = round(lh / pxOf(fontSize));
+  }
+  return value;
+}
+
+/* A frontmatter group (possibly nested by theme) → a DTCG group. */
+function dtcgGroup(node, type, convert) {
+  const out = { $type: type };
+  for (const [k, v] of Object.entries(node)) {
+    if (v && typeof v === 'object' && !Array.isArray(v) && !isLeaf(type, v)) {
+      const inner = dtcgGroup(v, type, convert);
+      delete inner.$type;
+      out[k] = inner;
+    } else {
+      const value = convert(v);
+      if (value != null) out[k] = { $value: value };
+    }
+  }
+  return out;
+}
+const isLeaf = (type, v) => (type === 'typography' && 'fontSize' in v) || (type === 'transition' && 'duration' in v);
+
+/* Values the DESIGN.md schema has no section for, from the stylesheets. */
+function codeTokens(model, tw3) {
+  const vars = ownVars(model);
+  const root = model.scope();
+  const value = (n) => model.resolveIn(`var(${n})`);
+  const pick = (re) => vars.filter((n) => re.test(n)).sort();
+  const name = (n, prefix) => n.replace(prefix, '') || 'default';
+  const out = {};
+  const duration = {};
+  for (const n of pick(/^--(duration|dur)-[\w-]+$/)) {
+    const ms = toMs(value(n));
+    if (ms != null) duration[name(n, /^--(duration|dur)-/)] = { $value: { value: ms, unit: 'ms' } };
+  }
+  const easing = {};
+  for (const n of pick(/^--(ease|easing)(-[\w-]+)?$/)) {
+    const b = dtcgBezier(value(n));
+    if (b) easing[name(n, /^--(ease|easing)-?/)] = { $value: b };
+  }
+  const shadow = {};
+  for (const n of pick(/^--shadow(-[\w-]+)?$/)) {
+    const s = dtcgShadow(value(n));
+    if (s) shadow[name(n, /^--shadow-?/)] = { $value: s };
+  }
+  const zIndex = {};
+  for (const n of pick(/^--z-[\w-]+$/)) {
+    const v = Number(value(n));
+    if (Number.isFinite(v)) zIndex[name(n, /^--z-/)] = { $value: v };
+  }
+  const breakpoint = {};
+  const screens = tw3?.theme.screens ?? Object.fromEntries(pick(/^--breakpoint-[\w-]+$/).map((n) => [name(n, /^--breakpoint-/), value(n)]));
+  for (const [k, v] of Object.entries(screens)) {
+    const dim = dtcgDimension(typeof v === 'string' ? v : v?.min);
+    if (dim) breakpoint[k] = { $value: dim };
+  }
+  if (Object.keys(duration).length) out.duration = { $type: 'duration', ...duration };
+  if (Object.keys(easing).length) out.easing = { $type: 'cubicBezier', ...easing };
+  if (Object.keys(shadow).length) out.shadow = { $type: 'shadow', ...shadow };
+  if (Object.keys(zIndex).length) out.zIndex = { $type: 'number', ...zIndex };
+  if (Object.keys(breakpoint).length) out.breakpoint = { $type: 'dimension', ...breakpoint };
+  void root;
+  return out;
+}
+
+function toDtcg(config, fm, code, swept, extra) {
+  const out = { $schema: DTCG_SCHEMA, $description: fm ? fm.description ?? fm.name : config.name };
+  if (fm?.colors) out.color = dtcgGroup(fm.colors, 'color', dtcgColor);
+  if (fm?.typography) out.typography = dtcgGroup(fm.typography, 'typography', dtcgTypography);
+  if (fm?.spacing) out.spacing = dtcgGroup(fm.spacing, 'dimension', (v) => dtcgDimension(v));
+  if (fm?.rounded) out.rounded = dtcgGroup(fm.rounded, 'dimension', (v) => dtcgDimension(v));
+  if (fm?.motion)
+    out.motion = dtcgGroup(fm.motion, 'transition', (m) => ({
+      duration: { value: toMs(m.duration), unit: 'ms' },
+      delay: { value: toMs(m.delay ?? '0ms'), unit: 'ms' },
+      timingFunction: dtcgBezier(m.timingFunction ?? 'ease') ?? NAMED_EASING.ease,
+    }));
+  Object.assign(out, code);
+  out.$extensions = {
+    [EXT]: {
+      generated: `design-tokens.mjs ${VERSION}. Do not edit; run the generator.`,
+      sources: {
+        css: config.css,
+        ...(config.tailwind ? { tailwind: config.tailwind } : {}),
+        sweep: config.sweep?.include ?? ['src', 'app', 'components', 'lib', 'pages'],
+      },
+      ...(fm?.$themes?.[0]?.name ? { themes: fm.$themes.map((t) => t.name) } : {}),
+      literals: swept.literals,
+      ...(Object.keys(extra).length ? { extra } : {}),
+    },
+  };
   return out;
 }
 
 async function build(config) {
+  if (config.extend) fail('config.extend was removed in 2.0. tokens.json is now the standard DTCG format: read its groups (color, typography, spacing, rounded, motion, duration, easing, shadow, zIndex, breakpoint) instead of a custom shape.');
   const model = loadModel(config);
   const tw3 = loadTailwind3(config);
   const swept = sweep(config);
@@ -1112,57 +1380,321 @@ async function build(config) {
       if (!corpus.includes(name)) fail(`fontVars names ${name}, but no source file mentions it any more. Remove it or update the mapping.`);
   }
 
-  /* Every mode's variables, raw as written and resolved as rendered. */
-  const modes = {};
-  for (const [key, vars] of Object.entries(model.modes)) {
-    modes[key] = {};
-    const resolveMode = key.startsWith('@') || model.rootKeys.includes(key) ? ':root' : key;
-    for (const [name, raw] of Object.entries(vars)) {
-      let resolved;
-      try {
-        resolved = model.resolveIn(raw, resolveMode);
-      } catch {
-        resolved = model.resolveIn(raw);
-      }
-      modes[key][name] = resolved === raw ? raw : { value: raw, resolved };
-    }
-  }
-  const resolveBlock = (source, mode) => {
-    const out = {};
-    for (const [key, vars] of Object.entries(source)) {
-      out[key] = {};
-      for (const [name, raw] of Object.entries(vars)) {
-        const resolved = model.resolveIn(raw, mode(key));
-        out[key][name] = resolved === raw ? raw : { value: raw, resolved };
-      }
-    }
-    return out;
-  };
-  const theme = resolveBlock(model.theme, () => ':root');
-  const scoped = resolveBlock(model.scoped, (key) => key);
-
   const extra = {};
   for (const x of config.extra ?? []) extra[x.name] = literalFromCode(x.file, x.const ?? x.name);
 
-  const tokens = {
-    $generated: `design-tokens.mjs ${VERSION}. Do not edit; run the generator.`,
-    sources: {
-      css: config.css,
-      ...(config.tailwind ? { tailwind: config.tailwind } : {}),
-      ...(config.extend ? { extend: config.extend } : {}),
-      sweep: config.sweep?.include ?? ['src', 'app', 'components', 'lib', 'pages'],
-    },
-    ...(await runExtend(config, model, tw3, swept)),
-    modes: sortObj(modes),
-    ...(Object.keys(theme).length ? { theme: sortObj(theme) } : {}),
-    ...(Object.keys(scoped).length ? { scoped: sortObj(scoped) } : {}),
-    ...(tw3 ? { tailwind: sortObj(tw3.theme) } : {}),
-    literals: swept.literals,
-    ...(Object.keys(extra).length ? { extra } : {}),
+  const fm = buildFrontmatter(config, model, tw3);
+  const code = codeTokens(fm?.$themes ? themedModel(model, fm.$themes[0].selector) : model, tw3);
+  const tokens = toDtcg(config, fm, code, swept, extra);
+  return { tokens, fm, model, tw3, swept };
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   design/preview.html — the design system, visible
+
+   One self-contained file, written from the same frontmatter and body:
+   every colour in every theme with its contrast, the type ramp, spacing,
+   radii, motion you can trigger, the components, the extra code tokens,
+   and the DESIGN.md guidance rendered below. No build step, no network
+   except the font stylesheet; open it from disk, commit it, or point
+   preview.file into public/ to serve it with the site. Deterministic, so
+   --check can gate it like the other two files.
+   ══════════════════════════════════════════════════════════════════ */
+
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+function luminance(v) {
+  const c = srgbOf(v);
+  if (!c) return null;
+  const lin = c.rgb.map((x) => (x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
+}
+/* A translucent colour is judged as it renders: composited over the ground. */
+function contrast(a, b) {
+  const fg = srgbOf(a);
+  const bg = srgbOf(b);
+  if (!fg || !bg) return null;
+  const mix = fg.rgb.map((c, i) => c * fg.alpha + bg.rgb[i] * (1 - fg.alpha));
+  const hex = `#${mix.map((x) => Math.round(x * 255).toString(16).padStart(2, '0')).join('')}`;
+  const x = luminance(hex);
+  const y = luminance(bg.hex.slice(0, 7));
+  return round((Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05), 2);
+}
+/* Only colours meant to be read get a pass/fail; a surface at 1.1:1 is the point. */
+const isInk = (name) => /(^on-|^fg|foreground|^text|ink|^primary$|^error$|^success$|^warning$)/.test(name);
+
+/* The colours of one theme: top-level tokens plus that theme's group. */
+function themeColors(fm, theme) {
+  const names = new Set((fm.$themes ?? []).map((t) => t.name).filter(Boolean));
+  const out = {};
+  for (const [k, v] of Object.entries(fm.colors ?? {})) if (!names.has(k) && typeof v === 'string') out[k] = v;
+  if (theme?.name && fm.colors?.[theme.name]) Object.assign(out, fm.colors[theme.name]);
+  return out;
+}
+
+/* Just enough Markdown for a DESIGN.md body: headings, paragraphs,
+   lists, tables, quotes, fenced code, inline code, bold, italic, links.
+   Token references render as chips. */
+function inlineMd(s, colors) {
+  let t = esc(s);
+  t = t.replace(/`([^`]+)`/g, (_, code) => {
+    const ref = code.match(/^\{colors\.([\w.-]+)\}$/);
+    const hex = ref && colors[ref[1].split('.').pop()];
+    return hex ? `<code class="ref"><i style="background:${esc(hex)}"></i>${code}</code>` : `<code>${code}</code>`;
+  });
+  t = t.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/(^|[^*])\*([^*\s][^*]*)\*/g, '$1<em>$2</em>');
+  t = t.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, label, href) => (/^(https?:|#|\.{0,2}\/|[\w-]+\.md)/.test(href) ? `<a href="${href}">${label}</a>` : label));
+  return t;
+}
+
+function renderMarkdown(md, colors) {
+  const lines = md.replace(/<!--[\s\S]*?-->/g, '').split('\n');
+  const out = [];
+  let i = 0;
+  const slug = (s) => s.toLowerCase().replace(/[^\w]+/g, '-').replace(/^-|-$/g, '');
+  while (i < lines.length) {
+    const line = lines[i];
+    if (!line.trim()) { i++; continue; }
+    let m;
+    if (/^(-{3,}|\*{3,})\s*$/.test(line)) {
+      out.push('<hr>');
+      i++;
+      continue;
+    }
+    if ((m = line.match(/^```(\w*)/))) {
+      const code = [];
+      i++;
+      while (i < lines.length && !lines[i].startsWith('```')) code.push(lines[i++]);
+      i++;
+      out.push(`<pre><code>${esc(code.join('\n'))}</code></pre>`);
+      continue;
+    }
+    if ((m = line.match(/^(#{1,4})\s+(.*)$/))) {
+      const level = Math.min(m[1].length + 1, 5);
+      out.push(`<h${level} id="g-${slug(m[2])}">${inlineMd(m[2], colors)}</h${level}>`);
+      i++;
+      continue;
+    }
+    if (/^\|/.test(line) && /^\|?\s*:?-{2,}/.test(lines[i + 1] ?? '')) {
+      const row = (l) => l.replace(/^\||\|$/g, '').split('|').map((c) => inlineMd(c.trim(), colors));
+      const head = row(line);
+      i += 2;
+      const body = [];
+      while (i < lines.length && /^\|/.test(lines[i])) body.push(row(lines[i++]));
+      out.push(`<table><thead><tr>${head.map((c) => `<th>${c}</th>`).join('')}</tr></thead><tbody>${body.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`);
+      continue;
+    }
+    if (/^\s*([-*]|\d+\.)\s+/.test(line)) {
+      const ordered = /^\s*\d+\./.test(line);
+      const items = [];
+      while (i < lines.length && /^\s*([-*]|\d+\.)\s+/.test(lines[i])) {
+        let item = lines[i++].replace(/^\s*([-*]|\d+\.)\s+/, '');
+        while (i < lines.length && /^\s{2,}\S/.test(lines[i]) && !/^\s*([-*]|\d+\.)\s+/.test(lines[i])) item += ` ${lines[i++].trim()}`;
+        items.push(`<li>${inlineMd(item, colors)}</li>`);
+      }
+      out.push(`<${ordered ? 'ol' : 'ul'}>${items.join('')}</${ordered ? 'ol' : 'ul'}>`);
+      continue;
+    }
+    if (line.startsWith('>')) {
+      const quote = [];
+      while (i < lines.length && lines[i].startsWith('>')) quote.push(lines[i++].replace(/^>\s?/, ''));
+      out.push(`<blockquote>${inlineMd(quote.join(' '), colors)}</blockquote>`);
+      continue;
+    }
+    const para = [];
+    while (i < lines.length && lines[i].trim() && !/^(#{1,4}\s|```|\||>|\s*([-*]|\d+\.)\s)/.test(lines[i])) para.push(lines[i++].trim());
+    out.push(`<p>${inlineMd(para.join(' '), colors)}</p>`);
+  }
+  return out.join('\n');
+}
+
+const GENERIC = /^(serif|sans-serif|monospace|cursive|fantasy|system-ui|ui-\w+|inherit|-apple-system)$/i;
+function fontStack(family, fontMap = {}) {
+  const list = String(family)
+    .split(',')
+    .map((f) => f.trim().replace(/^["']|["']$/g, ''))
+    .filter(Boolean)
+    .map((f) => (typeof fontMap[f] === 'string' && !/^https?:/.test(fontMap[f]) ? fontMap[f] : f));
+  /* Without the real font, fall back to the right kind, not the browser's Times. */
+  if (!list.some((f) => GENERIC.test(f))) list.push(/mono|code/i.test(list[0]) ? 'monospace' : /serif/i.test(list[0]) && !/sans/i.test(list[0]) ? 'serif' : 'sans-serif');
+  return list.map((f) => (GENERIC.test(f) ? f : `'${f}'`)).join(', ');
+}
+
+function typoStyle(t, fontMap) {
+  return [
+    t.fontFamily && `font-family:${fontStack(t.fontFamily, fontMap)}`,
+    t.fontSize && `font-size:${t.fontSize}`,
+    t.fontWeight && `font-weight:${t.fontWeight}`,
+    t.lineHeight != null && `line-height:${t.lineHeight}`,
+    t.letterSpacing && `letter-spacing:${t.letterSpacing}`,
+    t.fontFeature && `font-feature-settings:${t.fontFeature}`,
+    t.fontVariation && `font-variation-settings:${t.fontVariation}`,
+  ]
+    .filter(Boolean)
+    .join(';');
+}
+
+function renderPreview(config, fm, body, tokens) {
+  const themes = fm.$themes?.[0]?.name ? fm.$themes : [{ name: 'default' }];
+  const p = typeof config.preview === 'object' ? config.preview : {};
+  const families = [...new Set(Object.values(fm.typography ?? {}).map((t) => String(t.fontFamily ?? '').split(',')[0].trim().replace(/^["']|["']$/g, '')).filter((f) => f && !/^(system-ui|sans-serif|serif|monospace|inherit|ui-\w+|-apple-system)$/i.test(f)))].sort();
+  /* preview.fonts maps a family to its Google Fonts name ("Geist Sans": "Geist")
+     or to a stylesheet URL; everything else is tried on Google Fonts by name. */
+  const fontMap = p.fonts ?? {};
+  const urls = families.map((f) => fontMap[f]).filter((v) => typeof v === 'string' && /^https?:/.test(v));
+  const google = p.googleFonts === false ? [] : families.filter((f) => fontMap[f] !== false && !/^https?:/.test(fontMap[f] ?? '')).map((f) => fontMap[f] ?? f);
+  const fontLink = [
+    ...(google.length ? [`<link rel="stylesheet" href="https://fonts.googleapis.com/css2?${[...new Set(google)].sort().map((f) => `family=${encodeURIComponent(f).replace(/%20/g, '+')}:wght@100..900`).join('&')}&display=swap">`] : []),
+    ...urls.map((u) => `<link rel="stylesheet" href="${esc(u)}">`),
+  ].join('\n');
+  const first = themeColors(fm, themes[0]);
+  const ground = (c) => c.background ?? c.surface ?? c.neutral ?? '#ffffff';
+  const ink = (c) => c['on-background'] ?? c['on-surface'] ?? c.primary ?? '#000000';
+  const sections = [];
+  const nav = [];
+  const section = (id, title, html) => {
+    nav.push(`<a href="#${id}">${esc(title)}</a>`);
+    sections.push(`<section id="${id}"><h2>${esc(title)}</h2>${html}</section>`);
   };
 
-  const fm = buildFrontmatter(config, model, tw3);
-  return { tokens, fm, model, tw3, swept };
+  if (fm.colors) {
+    const panels = themes.map((t) => {
+      const c = themeColors(fm, t);
+      const bg = ground(c);
+      const cards = Object.entries(c)
+        .map(([name, v]) => {
+          /* on-x is read on x when x exists; everything else on the ground. */
+          const pair = name.startsWith('on-') && c[name.slice(3)] ? name.slice(3) : 'background';
+          const ratio = contrast(v, pair === 'background' ? bg : c[pair]);
+          const grade = isInk(name) ? (ratio >= 4.5 ? 'ok' : ratio >= 3 ? 'mid' : 'low') : '';
+          return `<figure class="swatch"><div class="chip" style="background:${esc(v)}"></div><figcaption><b>${esc(name)}</b><span>${esc(v)}</span>${ratio && name !== 'background' ? `<span${grade ? ` class="${grade}"` : ''}>${ratio}:1 on ${esc(pair)}</span>` : ''}</figcaption></figure>`;
+        })
+        .join('');
+      return `<div class="theme" data-theme="${esc(t.name)}" style="--g:${esc(bg)};--i:${esc(ink(c))}"><div class="grid">${cards}</div></div>`;
+    });
+    section('colors', 'Colors', panels.join(''));
+  }
+  if (fm.typography) {
+    const rows = Object.entries(fm.typography)
+      .map(([name, t]) => `<div class="type"><div class="meta"><b>${esc(name)}</b><span>${esc([t.fontFamily?.split(',')[0], t.fontSize, t.fontWeight, t.lineHeight != null && `/ ${t.lineHeight}`, t.letterSpacing].filter(Boolean).join(' · '))}</span></div><div class="sample" style="${esc(typoStyle(t, fontMap))}">${esc(p.sample ?? 'The quick brown fox jumps over the lazy dog')}</div></div>`)
+      .join('');
+    section('typography', 'Typography', `<div class="on-ground">${rows}</div>`);
+  }
+  const dims = (group) =>
+    Object.entries(fm[group] ?? {})
+      .filter(([, v]) => typeof v !== 'object')
+      .map(([name, v]) => [name, typeof v === 'number' ? `${v}px` : v]);
+  if (fm.spacing) section('spacing', 'Spacing', dims('spacing').map(([n, v]) => `<div class="space"><span><b>${esc(n)}</b> ${esc(v)}</span><i style="width:${esc(v)}"></i></div>`).join(''));
+  if (fm.rounded) section('rounded', 'Radius', `<div class="grid">${dims('rounded').map(([n, v]) => `<figure class="radius"><div style="border-radius:${esc(v)}"></div><figcaption><b>${esc(n)}</b><span>${esc(v)}</span></figcaption></figure>`).join('')}</div>`);
+
+  const motion = { ...(fm.motion ?? {}) };
+  const easing = tokens.easing ?? {};
+  if (Object.keys(motion).length || Object.keys(easing).length) {
+    const plot = (b) => `<svg viewBox="-4 -4 108 108" class="curve"><path d="M0 100 C${b[0] * 100} ${100 - b[1] * 100} ${b[2] * 100} ${100 - b[3] * 100} 100 0" /></svg>`;
+    const tiles = [
+      ...Object.entries(motion).map(([n, m]) => ({ n, d: m.duration, f: m.timingFunction ?? 'ease', b: dtcgBezier(m.timingFunction ?? 'ease') })),
+      ...Object.entries(easing)
+        .filter(([k]) => !k.startsWith('$'))
+        .map(([n, t]) => ({ n: `ease-${n}`, d: '600ms', f: `cubic-bezier(${t.$value.join(', ')})`, b: t.$value })),
+    ];
+    section(
+      'motion',
+      'Motion',
+      `<p class="hint">Hover a tile to play it.</p><div class="grid">${tiles.map((t) => `<figure class="motion" style="--d:${esc(t.d)};--f:${esc(t.f)}">${t.b ? plot(t.b) : ''}<div class="track"><i></i></div><figcaption><b>${esc(t.n)}</b><span>${esc(t.d)} · ${esc(t.f)}</span></figcaption></figure>`).join('')}</div>`
+    );
+  }
+
+  if (fm.components) {
+    const resolveIn = (theme, v) => {
+      if (typeof v !== 'string' || !v.startsWith('{')) return v;
+      const path = v.slice(1, -1).split('.');
+      if (path[0] === 'colors') return themeColors(fm, theme)[path.slice(1).pop()] ?? lookupRef(fm, v);
+      return lookupRef(fm, v);
+    };
+    const cards = Object.entries(fm.components)
+      .map(([name, props]) => {
+        const r = (k) => resolveIn(themes[0], props[k]);
+        const typo = r('typography');
+        const style = [
+          r('backgroundColor') && `background:${r('backgroundColor')}`,
+          r('textColor') && `color:${r('textColor')}`,
+          r('rounded') && `border-radius:${r('rounded')}`,
+          r('padding') && `padding:${r('padding')}`,
+          r('height') && `height:${r('height')}`,
+          r('width') && `width:${r('width')}`,
+          r('size') && `width:${r('size')};height:${r('size')}`,
+          typo && typeof typo === 'object' && typoStyle(typo, fontMap),
+        ]
+          .filter(Boolean)
+          .join(';');
+        return `<figure class="component"><div class="stage"><div class="specimen" style="${esc(style)}">${esc(name.replace(/-/g, ' '))}</div></div><figcaption><b>${esc(name)}</b>${Object.entries(props).map(([k, v]) => `<span>${esc(k)}: ${esc(v)}</span>`).join('')}</figcaption></figure>`;
+      })
+      .join('');
+    section('components', 'Components', `<div class="grid wide on-ground">${cards}</div>`);
+  }
+
+  const more = [];
+  const list = (group, fmt) =>
+    Object.entries(tokens[group] ?? {})
+      .filter(([k]) => !k.startsWith('$'))
+      .map(([k, t]) => `<tr><td><b>${esc(k)}</b></td><td>${esc(fmt(t.$value))}</td></tr>`)
+      .join('');
+  const dim = (v) => `${v.value}${v.unit}`;
+  if (tokens.duration) more.push(`<h3>Durations</h3><table>${list('duration', dim)}</table>`);
+  if (tokens.shadow) more.push(`<h3>Shadows</h3><div class="grid">${Object.entries(tokens.shadow).filter(([k]) => !k.startsWith('$')).map(([k, t]) => { const layers = [].concat(t.$value).map((s) => `${s.inset ? 'inset ' : ''}${dim(s.offsetX)} ${dim(s.offsetY)} ${dim(s.blur)} ${dim(s.spread)} ${s.color.hex}${s.color.alpha != null ? Math.round(s.color.alpha * 255).toString(16).padStart(2, '0') : ''}`).join(', '); return `<figure class="radius"><div style="box-shadow:${esc(layers)}"></div><figcaption><b>${esc(k)}</b></figcaption></figure>`; }).join('')}</div>`);
+  if (tokens.zIndex) more.push(`<h3>Z-index</h3><table>${list('zIndex', String)}</table>`);
+  if (tokens.breakpoint) more.push(`<h3>Breakpoints</h3><table>${list('breakpoint', dim)}</table>`);
+  if (more.length) section('more', 'More tokens', more.join(''));
+  if (body.trim()) section('guide', 'Guidelines', `<div class="prose">${renderMarkdown(body, first)}</div>`);
+
+  const switcher = themes.length > 1 ? `<div class="themes">${themes.map((t, i) => `<button data-set="${esc(t.name)}"${i === 0 ? ' aria-pressed="true"' : ''}>${esc(t.name)}</button>`).join('')}</div>` : '';
+  const bg0 = ground(first);
+  const ink0 = ink(first);
+  return `<!doctype html>
+<!-- Generated by scripts/design-tokens.mjs from DESIGN.md. Do not edit; run the generator. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>${esc(fm.name)} — design system</title>
+${fontLink}
+<style>
+:root{--g:${esc(bg0)};--i:${esc(ink0)};--chrome:#fafafa;--chrome-ink:#18181b;--line:rgba(0,0,0,.1);--soft:rgba(0,0,0,.55);color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--chrome:#111113;--chrome-ink:#ededef;--line:rgba(255,255,255,.12);--soft:rgba(255,255,255,.6);color-scheme:dark}}
+*{box-sizing:border-box}body{margin:0;background:var(--chrome);color:var(--chrome-ink);font:14px/1.5 system-ui,-apple-system,sans-serif}
+header{position:sticky;top:0;z-index:2;display:flex;flex-wrap:wrap;gap:12px 24px;align-items:center;padding:14px 24px;background:var(--chrome);border-bottom:1px solid var(--line)}
+header h1{font-size:15px;margin:0;font-weight:600}header p{margin:0;color:var(--soft);flex:1 1 280px}
+nav{display:flex;flex-wrap:wrap;gap:4px 14px}nav a{color:inherit;text-decoration:none;opacity:.7}nav a:hover{opacity:1}
+.themes{display:flex;gap:4px}.themes button{font:inherit;padding:4px 10px;border-radius:999px;border:1px solid var(--line);background:none;color:inherit;cursor:pointer}.themes button[aria-pressed=true]{background:var(--chrome-ink);color:var(--chrome)}
+main{max-width:1200px;margin:0 auto;padding:8px 24px 80px}section{padding:32px 0;border-bottom:1px solid var(--line)}h2{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--soft);margin:0 0 16px}h3{font-size:13px;margin:24px 0 8px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px}.grid.wide{grid-template-columns:repeat(auto-fill,minmax(260px,1fr))}
+figure{margin:0}figcaption{display:flex;flex-direction:column;gap:2px;padding:8px 2px 0;font-size:12px}figcaption span{color:var(--soft);font-family:ui-monospace,monospace;font-size:11px;word-break:break-all}
+.theme{display:none;padding:16px;border-radius:12px;background:var(--g);color:var(--i)}.theme.on{display:block}.theme figcaption span{color:inherit;opacity:.7}
+.chip{height:72px;border-radius:8px;box-shadow:inset 0 0 0 1px rgba(127,127,127,.25)}.ok{color:#16a34a!important;opacity:1!important}.mid{color:#ca8a04!important;opacity:1!important}.low{color:#dc2626!important;opacity:1!important}
+.on-ground{background:var(--g);color:var(--i);border-radius:12px;padding:16px}.on-ground figcaption span{color:inherit;opacity:.7}
+.type{display:grid;grid-template-columns:minmax(140px,220px) 1fr;gap:16px;align-items:baseline;padding:14px 0;border-bottom:1px solid rgba(127,127,127,.2)}.type:last-child{border:0}.type .meta{display:flex;flex-direction:column;font-size:12px}.type .meta span{opacity:.7;font-family:ui-monospace,monospace;font-size:11px}.sample{overflow-wrap:anywhere}
+@media (max-width:640px){.type{grid-template-columns:1fr}header{position:static}main,header{padding-left:16px;padding-right:16px}.theme,.on-ground{padding:12px}.chip{height:56px}}
+.space{display:flex;align-items:center;gap:16px;padding:6px 0}.space span{width:140px;flex:none;font-size:12px}.space i{display:block;height:12px;background:var(--chrome-ink);opacity:.6;border-radius:2px;max-width:100%}
+.radius div{height:88px;background:var(--g);box-shadow:inset 0 0 0 1px var(--line)}
+.motion .curve{width:100%;height:80px;fill:none;stroke:currentColor;stroke-width:2;opacity:.8}.track{height:28px;margin-top:8px;border-radius:999px;background:rgba(127,127,127,.15);position:relative;overflow:hidden}.track i{position:absolute;top:4px;left:4px;width:20px;height:20px;border-radius:50%;background:var(--chrome-ink);transition:transform var(--d) var(--f)}.motion:hover .track i{transform:translateX(calc(100cqw - 28px))}.track{container-type:inline-size}
+.stage{display:grid;place-items:center;min-height:120px;padding:16px;border-radius:8px;box-shadow:inset 0 0 0 1px rgba(127,127,127,.25)}.specimen{display:inline-flex;align-items:center;justify-content:center;padding:8px 16px;text-transform:capitalize}.prose hr{border:0;border-top:1px solid var(--line);margin:24px 0}
+.hint{color:var(--soft);margin:-8px 0 12px}table{border-collapse:collapse;width:100%;font-size:13px}td,th{text-align:left;padding:6px 10px 6px 0;border-bottom:1px solid var(--line);vertical-align:top}
+.prose{max-width:760px}.prose h2,.prose h3,.prose h4,.prose h5{text-transform:none;letter-spacing:0;color:inherit;font-size:16px;margin:28px 0 8px}.prose code{font-family:ui-monospace,monospace;font-size:12px;padding:1px 4px;border-radius:4px;background:rgba(127,127,127,.15)}.prose code.ref i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px;box-shadow:inset 0 0 0 1px rgba(127,127,127,.4)}.prose pre{overflow:auto;padding:12px;border-radius:8px;background:rgba(127,127,127,.1)}.prose blockquote{margin:0;padding-left:12px;border-left:2px solid var(--line);color:var(--soft)}.prose a{color:inherit}.prose table{display:block;overflow-x:auto}main{overflow-wrap:anywhere}
+@media (prefers-reduced-motion:reduce){.track i{transition:none}}
+</style>
+</head>
+<body>
+<header><h1>${esc(fm.name)}</h1>${fm.description ? `<p>${esc(fm.description)}</p>` : '<p></p>'}<nav>${nav.join('')}</nav>${switcher}</header>
+<main>
+${sections.join('\n')}
+</main>
+<script>
+(function(){var panels=document.querySelectorAll('.theme'),buttons=document.querySelectorAll('[data-set]');function set(name){panels.forEach(function(p,i){p.classList.toggle('on',name?p.dataset.theme===name:i===0)});buttons.forEach(function(b){b.setAttribute('aria-pressed',String(b.dataset.set===name))});var on=document.querySelector('.theme.on');if(on){document.documentElement.style.setProperty('--g',on.style.getPropertyValue('--g'));document.documentElement.style.setProperty('--i',on.style.getPropertyValue('--i'))}}buttons.forEach(function(b){b.addEventListener('click',function(){set(b.dataset.set)})});set(buttons.length?buttons[0].dataset.set:null)})();
+</script>
+</body>
+</html>
+`;
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1187,7 +1719,7 @@ function diff(before, after) {
   const b = flatten(after);
   const changes = [];
   for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
-    if (k.startsWith('$generated')) continue;
+    if (k.startsWith('$generated') || k.endsWith('.generated')) continue;
     if (!(k in a)) changes.push({ kind: 'added', path: k, to: b[k] });
     else if (!(k in b)) changes.push({ kind: 'removed', path: k, from: a[k] });
     else if (a[k] !== b[k]) changes.push({ kind: 'changed', path: k, from: a[k], to: b[k] });
@@ -1196,7 +1728,7 @@ function diff(before, after) {
 }
 
 function describe(change, where) {
-  const m = change.path.match(/^literals\.(?:(arbitrary)\.([\w-]+)|([\w]+))\[\](.*)$/);
+  const m = change.path.match(/^(?:\$extensions\.design-contract\.)?literals\.(?:(arbitrary)\.([\w-]+)|([\w]+))\[\](.*)$/);
   if (m) {
     const value = JSON.parse(m[4]);
     const key = m[1] ? `arbitrary.${m[2]}:${value}` : `${m[3]}:${value}`;
@@ -1430,7 +1962,8 @@ function detectInit() {
     css,
     ...(tailwind && (twVersion ?? 3) < 4 ? { tailwind } : {}),
     sweep: { include, exclude: [] },
-    designMd: { file: 'DESIGN.md', name: pkg.name ?? 'Project', description: '' },
+    designMd: { file: 'DESIGN.md', name: pkg.name ?? 'Project', description: '', all: true },
+    preview: { file: 'design/preview.html', googleFonts: true },
   };
 
   if (!css.length) return { config, notes: ['No stylesheet with :root or @theme found. Set "css" by hand.'] };
@@ -1479,16 +2012,28 @@ function detectInit() {
     .join('\n');
   const darkFirst =
     /<html[^>]*class(?:Name)?=["'{`][^"'`}]*\bdark\b/.test(shells) || /defaultTheme=["'{]\s*["']?dark["']?/.test(shells) || /forcedTheme=["'{]\s*["']?dark/.test(shells);
-  if (modes.length && darkFirst && modes[0] === '.dark') {
-    designMd.mode = '.dark';
-    notes.push('The root layout defaults to dark, so the frontmatter publishes the dark theme (designMd.mode). tokens.json keeps every theme.');
+  /* Themes, default first: the one people see unless they switch. */
+  if (modes.length) {
+    const dark = modes[0];
+    designMd.themes = darkFirst ? { [dark]: 'dark', ':root': 'light' } : { ':root': 'light', [dark]: 'dark' };
+    notes.push(`Themes: ${Object.values(designMd.themes).join(' (default), ')}. Colours that differ between them are published under a group per theme; the rest stay at the top level.`);
+  } else if (darkFirst) notes.push('The root layout defaults to dark but no .dark block re-points the palette, so one theme is published.');
+  const others = Object.keys(model.modes).filter((k) => !model.rootKeys.includes(k) && !k.startsWith('@') && !modes.includes(k));
+  if (others.length) notes.push(`Other blocks that re-point the palette: ${others.join(', ')}. Add any that is a real theme to designMd.themes.`);
+  notes.push('"all": true publishes every colour, radius and spacing variable the stylesheets declare, named after the variable; the mapping adds role names on top.');
+
+  /* Motion: pair the project's curves with its durations. */
+  const ease = pick('--ease-out', '--ease', '--easing-standard', '--ease-standard');
+  const durs = Object.keys(vars).filter((n) => /^--(duration|dur)-[\w-]+$/.test(n) && !(n in model.twDefaults));
+  if (ease || durs.length) {
+    const fast = durs.find((n) => /fast|short|xs|sm|100|150/.test(n)) ?? durs[0];
+    const base = durs.find((n) => /base|normal|md|200|250/.test(n)) ?? durs[1] ?? fast;
+    designMd.motion = {
+      'state-change': { duration: fast ?? '150ms', timingFunction: ease ?? 'ease-out' },
+      'surface-enter': { duration: base ?? '250ms', timingFunction: ease ?? 'ease-out' },
+    };
+    notes.push('Proposed two motion tokens (state-change, surface-enter) from the curves and durations found. Name them by purpose; check the durations.');
   }
-  const themes = Object.keys(model.modes).filter((k) => !model.rootKeys.includes(k) && !k.startsWith('@'));
-  if (themes.length)
-    notes.push(
-      `Themes found: ${themes.join(', ')}. tokens.json carries all of them; describe them in the Colors prose. ` +
-        `Publishing them in the frontmatter too ("modes") makes the linter flag each suffixed colour as unreferenced once components exist.`
-    );
 
   const radii = Object.keys(vars).filter((n) => /^--radius-[\w]+$/.test(n) && !(n in model.twDefaults && !Object.values(model.theme).some((t) => n in t)));
   if (radii.length) designMd.rounded = Object.fromEntries(radii.map((n) => [n.replace('--radius-', ''), n]));
@@ -1515,6 +2060,7 @@ function detectInit() {
   return { config, notes };
 }
 
+
 /* ══════════════════════════════════════════════════════════════════
    Main
    ══════════════════════════════════════════════════════════════════ */
@@ -1526,6 +2072,11 @@ function loadConfig() {
   } catch (e) {
     fail(`${rel(CONFIG_PATH)} is not valid JSON: ${e.message}`);
   }
+}
+
+function previewPath(config) {
+  if (config.preview === false) return null;
+  return resolve(ROOT, (typeof config.preview === 'object' && config.preview.file) || 'design/preview.html');
 }
 
 async function main() {
@@ -1543,8 +2094,12 @@ async function main() {
   const built = await build(config);
   const tokensPath = resolve(ROOT, config.output ?? 'design/tokens.json');
   const designPath = resolve(ROOT, config.designMd?.file ?? 'DESIGN.md');
+  const htmlPath = built.fm ? previewPath(config) : null;
   const tokensJson = JSON.stringify(built.tokens, null, 2) + '\n';
   const fmText = built.fm ? renderFrontmatter(config, built.fm) : null;
+  const existing = existsSync(designPath) ? readFileSync(designPath, 'utf8') : '';
+  const { body } = splitDesignMd(existing);
+  const html = htmlPath ? renderPreview(config, built.fm, body, built.tokens) : null;
 
   if (flag('--report')) {
     const r = report(config, built);
@@ -1556,14 +2111,19 @@ async function main() {
     const problems = [];
     if (!existsSync(tokensPath)) problems.push({ file: rel(tokensPath), lines: ['missing — run the generator and commit it'] });
     else {
-      const before = JSON.parse(readFileSync(tokensPath, 'utf8'));
+      let before;
+      try {
+        before = JSON.parse(readFileSync(tokensPath, 'utf8'));
+      } catch {
+        before = {};
+      }
       const changes = diff(before, built.tokens);
       if (changes.length) problems.push({ file: rel(tokensPath), lines: changes.map((c) => describe(c, built.swept.where)) });
     }
     if (fmText) {
-      if (!existsSync(designPath)) problems.push({ file: rel(designPath), lines: ['missing'] });
+      if (!existing) problems.push({ file: rel(designPath), lines: ['missing'] });
       else {
-        const { frontmatter } = splitDesignMd(readFileSync(designPath, 'utf8'));
+        const { frontmatter } = splitDesignMd(existing);
         if (frontmatter !== fmText) {
           /* A line diff is enough: the block is ours, one value per line. */
           const was = (frontmatter ?? '').split('\n').filter((l) => l && !l.startsWith('#') && l !== '---');
@@ -1579,14 +2139,13 @@ async function main() {
     }
     /* The prose, too. The body is hand-written, so it's where stale values
        hide: a {colors.x} the mapping renamed, a hex the code no longer has. */
-    if (fmText && existsSync(designPath)) {
-      const text = readFileSync(designPath, 'utf8');
-      const { frontmatter, body } = splitDesignMd(text);
+    if (fmText && existing) {
+      const { frontmatter } = splitDesignMd(existing);
       const offset = frontmatter ? frontmatter.split('\n').length - 1 : 0;
       const lineOf = (i) => body.slice(0, i).split('\n').length + offset;
       const lines = [];
-      for (const m of body.matchAll(/\{(colors|typography|rounded|spacing|components)\.([\w-]+)\}/g)) {
-        if (built.fm[m[1]]?.[m[2]] == null) lines.push(`line ${lineOf(m.index)}: {${m[1]}.${m[2]}} is not in the frontmatter`);
+      for (const m of body.matchAll(/\{((?:colors|typography|rounded|spacing|motion|components)(?:\.[\w-]+)+)\}/g)) {
+        if (lookupRef(built.fm, m[0]) == null) lines.push(`line ${lineOf(m.index)}: {${m[1]}} is not in the frontmatter`);
       }
       const known = new Set();
       const collect = (node) => {
@@ -1595,6 +2154,7 @@ async function main() {
       };
       collect(built.tokens);
       collect(built.fm);
+      for (const mode of Object.values(built.model.modes)) collect(mode);
       for (const h of built.swept.hardcodedColors) known.add(h.value.toLowerCase());
       const expand = (h) => (h.length === 4 ? `#${[...h.slice(1)].map((c) => c + c).join('')}` : h);
       /* (#15161A) after a token name is the recommended style; ](#anchor) is a link. */
@@ -1604,9 +2164,14 @@ async function main() {
       }
       if (lines.length) problems.push({ file: `${rel(designPath)} prose`, lines });
     }
+    if (htmlPath) {
+      const was = existsSync(htmlPath) ? readFileSync(htmlPath, 'utf8') : null;
+      if (was !== html) problems.push({ file: rel(htmlPath), lines: [was == null ? 'missing — run the generator and commit it' : 'out of date with DESIGN.md — run the generator'] });
+    }
 
+    const written = [rel(tokensPath), fmText && `${rel(designPath)} frontmatter`, htmlPath && rel(htmlPath)].filter(Boolean);
     if (AS_JSON) console.log(JSON.stringify({ ok: !problems.length, problems }, null, 2));
-    else if (!problems.length) console.log(`✓ ${rel(tokensPath)}${fmText ? ` and ${rel(designPath)} frontmatter` : ''} match the implementation`);
+    else if (!problems.length) console.log(`✓ ${written.join(', ')} match the implementation`);
     else {
       console.error('✗ design tokens have drifted from the implementation\n');
       for (const p of problems) {
@@ -1615,9 +2180,9 @@ async function main() {
         if (p.lines.length > 40) console.error(`    … and ${p.lines.length - 40} more`);
         console.error('');
       }
-      if (problems.some((p) => !p.file.endsWith('prose'))) {
+      if (problems.some((p) => p.file === rel(tokensPath) || p.file.endsWith('frontmatter'))) {
         console.error('  A new literal usually means a value was invented instead of reusing a token.');
-        console.error('  If the change is intended: run the generator, read the diff, commit both files.');
+        console.error('  If the change is intended: run the generator, read the diff, commit the files.');
       }
       if (problems.some((p) => p.file.endsWith('prose')))
         console.error('  The prose names a token or value the code no longer has. Fix the sentence, not the code.');
@@ -1627,20 +2192,23 @@ async function main() {
 
   mkdirSync(dirname(tokensPath), { recursive: true });
   writeFileSync(tokensPath, tokensJson);
-  let wrote = rel(tokensPath);
+  const wrote = [rel(tokensPath)];
   if (fmText) {
-    const existing = existsSync(designPath) ? readFileSync(designPath, 'utf8') : '';
-    const { body } = splitDesignMd(existing);
     writeFileSync(designPath, fmText + (body.startsWith('\n') || !body ? body : `\n${body}`));
-    wrote += ` and ${rel(designPath)} frontmatter`;
+    wrote.push(`${rel(designPath)} frontmatter`);
     if (!existing) console.log(`created ${rel(designPath)} with its frontmatter; the body is yours to write`);
   }
-  console.log(`wrote ${wrote}`);
+  if (htmlPath) {
+    mkdirSync(dirname(htmlPath), { recursive: true });
+    writeFileSync(htmlPath, html);
+    wrote.push(rel(htmlPath));
+  }
+  console.log(`wrote ${wrote.join(', ')}`);
   return 0;
 }
 
 /* The pure parts, for the test suite. Importing this file runs nothing. */
-export { parseCss, resolveVars, evalCalc, simplifyCalc, parseColor, deltaE, toDimension, toYaml, splitDesignMd, TokenError };
+export { parseCss, resolveVars, evalCalc, simplifyCalc, parseColor, deltaE, toDimension, toYaml, splitDesignMd, srgbOf, dtcgColor, dtcgDimension, dtcgShadow, dtcgTypography, renderMarkdown, contrast, TokenError };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   try {

@@ -69,7 +69,7 @@ seam, that's an `architecture` candidate.
 | | [**architecture**](skills/architecture/SKILL.md) | Finds shallow, tangled, untestable modules and designs deep ones, with a fixed vocabulary and a design-it-twice pattern. |
 | | [**prototype**](skills/prototype/SKILL.md) | Throwaway code for one question: a clickable HTML state model, or radically different UI variants on one route. |
 | | [**research**](skills/research/SKILL.md) | A background agent that reads primary sources and leaves one cited file. |
-| **Design** | [**design-contract**](skills/design-contract/SKILL.md) | A [DESIGN.md](https://github.com/google-labs-code/design.md) whose tokens are **parsed from the code**, never typed, and a `tokens:check` gate that **fails the build** when code and docs disagree. |
+| **Design** | [**design-contract**](skills/design-contract/SKILL.md) | The same design setup in every project: a [DESIGN.md](https://github.com/google-labs-code/design.md) whose tokens are **parsed from the code**, standard DTCG `tokens.json`, a generated preview page, and a `tokens:check` gate that **fails the build** when code and docs disagree. |
 | | [**polish**](skills/polish/SKILL.md) | The details that make UI feel finished — radii, alignment, surfaces, icons, states, touch — reviewed inside the project's design contract, with a Block or Approve verdict. |
 | | [**motion**](skills/motion/SKILL.md) | Whether to animate at all, then the right tool, properties, curve, duration, exit and reduced motion — using the project's own tokens. |
 | **Agents** | [**agent-conventions**](skills/agent-conventions/SKILL.md) | AGENTS.md as the canonical instructions, a short CLAUDE.md, skills vendored once and pinned, decision records, and a verifier that catches drift. |
@@ -106,9 +106,13 @@ opposite rule: **values are parsed, never typed.**
 - **It audits with facts, not impressions.** `--report` counts distinct values per category, finds
   near-duplicate colours *within a theme* (OKLab ΔE), lists tokens with no static reference (aware of
   Tailwind 4 namespaces and dynamically composed names) and hex colours hard-coded in components.
-- **It fits a system that already exists.** If something already reads your tokens file in a
-  curated shape (a design-system page, a Figma sync), an `extend` module rebuilds that shape from
-  the parsed values — gated like everything else — so adopting doesn't break the consumer.
+- **It stays inside the standards.** DESIGN.md is Google's spec with every token in the
+  frontmatter — light and dark as theme groups, motion included. `design/tokens.json` is plain W3C
+  DTCG, readable by Figma plugins, Style Dictionary and Claude. No custom formats to learn.
+- **You can see it.** `design/preview.html` is generated alongside: every colour per theme with
+  its contrast, the type ramp, spacing, radii, motion you can play, the components, and the
+  DESIGN.md guidance. One self-contained file — open it, commit it, or serve it from `public/`.
+  Publishing a hosted Claude Design System from it is one step more.
 - **It's honest.** Near-duplicates are recorded as Known inconsistencies, never silently merged —
   consolidating changes the design, and that's your call.
 - **It protects the brand from other skills.** A *Deliberate choices* section names the patterns
