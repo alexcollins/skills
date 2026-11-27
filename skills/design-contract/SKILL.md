@@ -1,245 +1,203 @@
 ---
 name: design-contract
 description: >-
-  Turn a codebase's real design into a contract every agent reads and the build enforces: a
-  DESIGN.md that follows the open spec (google-labs-code/design.md) with its token frontmatter
-  generated from the code, a full design/tokens.json, a component inventory that says when NOT
-  to use each component, layout and motion references, reference screenshots at desktop and
-  mobile widths, AGENTS.md / CLAUDE.md wiring so agents actually read it — and a tokens:check
-  gate that fails the build the moment code and docs disagree. Use this whenever someone wants to
-  create, extract, document, audit, refresh or migrate a design system, DESIGN.md, design tokens
-  or a style guide for an existing project; wants AI agents to stay on-brand; asks why generated
-  UI keeps drifting from the design; or wants the same design-doc setup across several repos —
-  even if they never say "design system".
+  Give any project the same design setup: a DESIGN.md that follows Google's open spec with every
+  token parsed from the code (themes, type, spacing, radii, motion, components), a standard W3C
+  DTCG design/tokens.json, a generated design/preview.html that shows the whole system, and a
+  tokens:check gate that fails the build the moment code and docs disagree — optionally published
+  as a hosted Claude Design System. Use whenever someone wants to create, extract, document, audit,
+  refresh or migrate a design system, DESIGN.md, design tokens or a style guide; wants a page that
+  shows their design system; wants AI agents to stay on-brand; or wants every repo's design docs
+  done the same way — even if they never say "design system".
 license: MIT
 metadata:
   author: alexcollins
-  version: "1.0.0"
+  version: "2.0.0"
 ---
 
 # Design contract
 
-A design document an agent trusts is worse than none when it is wrong, and they all go wrong the
-same way: someone writes the values down once, the code moves, the document doesn't. This skill
-builds the version that can't drift. The values in it are parsed from the code, never typed. The
-build fails when they disagree. The prose around them is written from the code too, and says
-plainly where the code breaks its own rules.
-
-It produces, in the target repository:
+A design document is only useful while it's true, and they all go stale the same way: someone
+writes the values down once, the code moves, the document doesn't. Here the values are **parsed
+from the code, never typed**, the build fails when they disagree, and the same files come out of
+every project:
 
 ```
-DESIGN.md                    the spec-compliant design system. Frontmatter generated; body written
-design/tokens.config.json    which token plays which role — authored once, a judgement
-design/tokens.json           every value the code defines — generated, never edited
-design/components.md         the inventory, and when NOT to use each component
-design/layout.md             shell, widths, grids, breakpoints, z-index ladder
-design/motion.md             curves, durations, reduced motion, when not to animate
-design/references/           full-page captures at 1440 and 390, and how to re-take them
+DESIGN.md                    Google's spec. Frontmatter generated (every token); body written
+design/tokens.config.json    which variable plays which role. The one hand-made judgement
+design/tokens.json           W3C DTCG 2025.10. Generated
+design/preview.html          the system, rendered. Generated, self-contained, hostable
+design/references/           full-page captures at 1440 and 390
 scripts/design-tokens.mjs    the generator: write · --check · --report · --init
-AGENTS.md / CLAUDE.md        the pointers that make every agent read the above
 ```
+
+Everything stays inside the standards: DESIGN.md lints clean with `npx @google/design.md lint`,
+tokens.json is plain DTCG that Figma plugins, Style Dictionary and Claude can read, and the
+preview is one HTML file with no build step.
 
 ## The contract
 
-These are the rules the whole skill rests on. Every one of them exists because the opposite is the
-common failure.
+1. **Document what exists. Don't redesign.** Nothing rendered changes while this skill runs. What
+   looks wrong goes in the report and Known inconsistencies; fixing it is a separate change.
+2. **Values are parsed, never typed.** If the generator can't find a value in the code, it isn't
+   part of the system yet. Prose may name a token; it never states a different value.
+3. **Honest over tidy.** Two near-identical colours, a third easing curve, a z-index off the ladder:
+   record them, never silently merge. Merging changes the design — the user's call.
+4. **Every rule carries its reason.** "Never X, because Y" gets followed, and says when it stops
+   applying.
+5. **Never lose an existing rule.** An existing DESIGN.md, style guide or design section in
+   CLAUDE.md gets merged in, every rule kept — moved, reworded or marked superseded, never dropped.
+6. **The gate ships, or it's decoration.** `tokens:check` runs before the build (or in CI, or a
+   pre-commit hook).
 
-1. **Document what exists. Do not redesign.** No rendered pixel changes while this skill runs. If
-   something looks wrong, it goes in the audit or Known inconsistencies — it does not get fixed on
-   the way past. Fixing is a separate change the user asks for.
-2. **Values are parsed, never typed.** The DESIGN.md frontmatter and `design/tokens.json` come out
-   of `scripts/design-tokens.mjs`. If you want to write a value that the generator cannot find in
-   the code, that value is not part of the system yet. Prose may *name* a value; it never states a
-   different one.
-3. **Honest over tidy.** Two near-identical colours, three easing curves where the rules say two, a
-   z-index outside the ladder: record them. Never silently consolidate. Consolidation changes the
-   design, so it is the user's decision (rule 1).
-4. **Every rule carries its reason.** "Never X" alone gets argued with or ignored. "Never X, because
-   Y" gets followed, and tells the next reader when the rule has stopped applying.
-5. **Negative rules are the useful ones.** What a component is *not* for, what the palette never
-   does, which generic habits this brand refuses. An inventory that only says what things are
-   changes nothing.
-6. **Never lose an existing rule.** When DESIGN.md, AGENTS.md, CLAUDE.md or a style guide already
-   exists, show it, merge into it, and keep every rule it had — moved, reworded or superseded with
-   a note, never dropped.
-7. **The gate ships, or the contract is decoration.** `tokens:check` runs in the build (or CI, or a
-   pre-commit hook when there is no build). A document without the gate is a snapshot.
+## Pick the mode
 
-## Pick the mode first
+Look first: `package.json`, `DESIGN.md`, `design/`, AGENTS.md, CLAUDE.md, `.stitch/`, style guides
+in `docs/`, design rules buried in a README.
 
-Look before deciding. `ls`, read `package.json`, check for `DESIGN.md`, `design/`, `AGENTS.md`,
-`CLAUDE.md`, `.stitch/`, `.impeccable/`, a style guide in `docs/`, design rules buried in a
-CLAUDE.md.
+| Situation | Mode |
+|---|---|
+| No design docs | **Bootstrap** — every phase |
+| Docs exist, but values are hand-typed or there's no gate | **Adopt** — every phase, merging what exists |
+| Set up already; `tokens:check` fails or the prose is stale | **Refresh** — regenerate, read the diff, fix the prose that describes what moved |
+| Set up with design-contract 1.x | **Upgrade** — see [references/upgrade.md](references/upgrade.md) |
+| "How consistent is our styling?" | **Audit** — phase 1 only, write nothing |
 
-| Situation | Mode | What changes |
-|---|---|---|
-| No design docs at all | **Bootstrap** | Everything below, from scratch |
-| Design docs exist but no generated frontmatter or no gate — including rules living inside CLAUDE.md or a README | **Adopt** | Restructure into the spec, keep every rule, add the generator and the gate |
-| Already set up; `tokens:check` fails, or the prose describes values that changed | **Refresh** | Regenerate, read the diff, update the prose that describes what moved, update Known inconsistencies |
-| "How consistent is our design?" / "audit the styling" | **Audit** | Phase 1 only. Report; write nothing |
-
-If `.stitch/DESIGN.md` or `.impeccable/` exists, another tool already owns a DESIGN.md. Do not
-create a competing authority: the root DESIGN.md this skill writes is spec-compliant, so both can
-read it — say so, and ask whether to consolidate onto it.
+If another tool already owns a DESIGN.md (`.stitch/`, `.impeccable/`), don't create a rival: the
+root DESIGN.md this skill writes is spec-compliant, so say both can read it and ask before
+consolidating.
 
 ## Workflow
 
-Run the phases in order. Each one names the reference to read *before* doing it; read it then, not
-up front.
+Each phase names the reference to read before doing it.
 
-### Phase 1 — Audit (report, don't fix)
+### 1 · Audit — report, don't fix
 
-Copy `scripts/design-tokens.mjs` from this skill into the project's `scripts/` (the project owns
-its copy; CI must not depend on the skill being installed). Then:
+Copy `scripts/design-tokens.mjs` into the project's `scripts/` — the project owns its copy, so CI
+never depends on the skill. Then:
 
 ```bash
 node scripts/design-tokens.mjs --init      # proposes design/tokens.config.json
-node scripts/design-tokens.mjs --report    # the facts: counts, near-duplicates, unused tokens
+node scripts/design-tokens.mjs --report    # counts, near-duplicates, unused tokens, hard-coded hex
 ```
 
-Read [references/audit.md](references/audit.md), then read the codebase itself — the global
-stylesheet, the theme config, the component folder, three or four production pages. The report
-gives you facts no eyeballing will; the reading gives you the intent the report can't. Report to
-the user before writing any document:
+Read [references/audit.md](references/audit.md), then the stylesheet, the theme config, the
+component folder and three or four real pages. Report before writing anything: where there should
+be one system and there are several, near-duplicate colours, components that duplicate each other,
+tokens with no static reference, abandoned directions. In Audit mode, stop here.
 
-- where there should be one system and there are N ("5 durations, 3 easing curves, 11 z-indexes")
-- near-duplicate colours within one theme, and hex colours hard-coded in components
-- components that duplicate each other; a pattern implemented two ways
-- tokens with no static reference (say "no static reference", not "dead" — see the audit guide)
-- anything that looks like an abandoned direction
+### 2 · Generate, and gate
 
-In **Audit** mode, stop here.
+Read [references/config.md](references/config.md) and review the proposed config by hand. `--init`
+guesses; you decide:
 
-### Phase 2 — The generator and the gate
-
-Read [references/config.md](references/config.md). Review the proposed `design/tokens.config.json`
-by hand — `--init` guesses; you decide. The mapping is the one place judgement enters:
-
-- which custom property plays which role, in Material 3 names — `primary` (in a monochrome system
-  it is the text colour, and that is correct: say so in the prose), `background`, `surface`,
-  `surface-variant`, `outline-variant`, `error`. The linter treats those as families; custom names
-  get flagged once components exist
-- which type step is `headline-lg`, `body-md`, `label-sm` — roles, not every variant
-- font variables a loader defines at runtime (`next/font`, fontsource) go in `fontVars`
-- the theme people actually see is the one the frontmatter publishes — `"mode": ".dark"` for a
-  dark-first product; other themes live in tokens.json and the Colors prose
-- a fluid `clamp()` is published as its desktop bound
-- **Adopt:** if the project already has a token script, grep for what reads its output (a
-  `/design-system` page, a Figma sync). Keep that shape with an `extend` module (config.md) and
-  diff old against new output before deleting the old script. A consumer silently reading
-  `undefined` is the failure this skill exists to prevent
-
-Then:
+- **Roles** in Material 3 names (`primary`, `background`, `surface`, `on-surface-variant`,
+  `outline-variant`, `error`) — the spec's linter treats them as families.
+- **Themes**, default first: `{ ":root": "light", ".dark": "dark" }`. The default is published
+  whole; the others list only what they change.
+- **`"all": true`** publishes every colour, radius and spacing variable the stylesheets declare;
+  the roles sit on top.
+- **Typography** roles (`headline-lg`, `body-md`, `label-sm`), **motion** by purpose
+  (`state-change`, `surface-enter`), and the handful of **components** an agent builds with.
+- **Fonts** a loader defines at runtime go in `fontVars`; `preview.fonts` maps a family to its
+  Google Fonts name when they differ.
 
 ```bash
-node scripts/design-tokens.mjs           # writes design/tokens.json + DESIGN.md frontmatter
-npx @google/design.md lint DESIGN.md     # the spec's own linter: 0 errors before moving on
+node scripts/design-tokens.mjs           # DESIGN.md frontmatter, design/tokens.json, design/preview.html
+npx @google/design.md lint DESIGN.md     # 0 errors before moving on
 ```
 
-Wire the scripts using the project's package manager, and put the check in front of the build:
+Wire it with the project's package manager, the check in front of the build:
 
 ```jsonc
 "tokens":        "node scripts/design-tokens.mjs",
 "tokens:check":  "node scripts/design-tokens.mjs --check",
 "tokens:report": "node scripts/design-tokens.mjs --report",
-"build":         "npm run tokens:check && <the existing build command>"
+"build":         "npm run tokens:check && <the existing build>"
 ```
 
-Prove the gate works before trusting it: add an invented literal (`bg-white/[0.07]`) to a
-component, run `tokens:check`, see it fail with the file and line, revert.
+Prove the gate: add an invented literal (`bg-white/[0.07]`) to a component, watch `tokens:check`
+fail with its file and line, revert.
 
-### Phase 3 — DESIGN.md
+### 3 · Write the DESIGN.md body
 
-Read [references/design-md.md](references/design-md.md) and start from
-[templates/DESIGN.md](templates/DESIGN.md). The frontmatter already exists; you write the body
-below it. The generator only ever rewrites the frontmatter, so the body is safe across runs.
+Read [references/design-md.md](references/design-md.md); start from
+[templates/DESIGN.md](templates/DESIGN.md). The generator only rewrites the frontmatter, so the
+body is safe across runs. Use the spec's sections in its order — Overview, Colors, Typography,
+Layout, Elevation & Depth, Shapes, Motion, Voice & Content Strategy, Components, Do's and Don'ts —
+then this skill's three: **Deliberate choices**, **Known inconsistencies**, **Before shipping UI**.
+Everything lives in this one file; Components points at source files with `@path` references.
 
-The sections the spec defines keep its order and exact headings: **Overview, Colors, Typography,
-Layout, Elevation & Depth, Shapes, Components, Do's and Don'ts**. This skill adds **Source of
-truth, Motion, Brand assets, Deliberate choices, Known inconsistencies, Before shipping UI** —
-the spec preserves unknown sections, and the linter accepts them anywhere.
+What makes one work, in order of how often it's missing:
 
-The three things that make a DESIGN.md work, in order of how often they are missing:
+1. **A specific reference, not adjectives.** "A darkroom light table: everything dim except the
+   work", not "modern, clean, premium". It is usually already in the copy.
+2. **Known inconsistencies** — every audit finding left alone, where, and why it stands.
+3. **Deliberate choices** — the patterns other design tools flag as generic (mono caps labels,
+   near-black grounds, hairlines) that this brand uses on purpose, so nobody "fixes" them.
 
-1. **A specific reference, not adjectives.** "A darkroom light table: everything dim except the work" carries
-   a whole world; "modern, clean, premium" carries nothing. Find the reference in the code and the
-   copy — it is usually already there.
-2. **Known inconsistencies.** Every audit finding the user did not ask to fix, with where it is and
-   why it stands. This is what makes the rest of the document believable.
-3. **Deliberate choices.** Design skills like `frontend-design` flag mono labels, caps eyebrows,
-   near-black grounds and middle-dot metadata as generic "tells". If this brand uses one on
-   purpose, say so and say why — otherwise the next agent "fixes" the brand.
+Run the generator again afterwards: the preview renders the body too.
 
-### Phase 4 — The design/ references
+### 4 · Make it visible
 
-Read [references/design-docs.md](references/design-docs.md). Write `design/components.md`,
-`design/layout.md` and `design/motion.md` from the templates. The component inventory is the one
-agents consult most: every component gets its path, variants, states, and a **Don't** line naming
-what to use instead.
+`design/preview.html` is already there. Open it and check every theme, the type ramp and the
+components look right. To host it with the site, point `preview.file` into the public folder
+(`public/design-system/index.html`); it carries `noindex`. Keep it out of the sitemap and the
+navigation.
 
-### Phase 5 — Reference captures
+Then the reference captures, when the app can run here:
 
 ```bash
-node scripts/capture.mjs --base http://localhost:3000 home=/ about=/about pricing=/pricing
+node scripts/capture.mjs --base http://localhost:3000 home=/ about=/about
 ```
 
-`scripts/capture.mjs` (copy it alongside the generator) writes `design/references/<name>-<width>`
-at 1440 and 390 with reduced motion, plus the README that says how to re-take them (never over a
-README someone wrote by hand). Capture every page template, not every page, and capture twice: a
-page that differs between runs has something scroll-driven in it, which goes in the README rather
-than into a baseline that changes on its own. If the app cannot run here, say so and leave the
-README with the command; do not skip silently.
+Every page template at 1440 and 390, reduced motion, captured twice — a page that differs between
+runs has scroll-driven motion, which goes in the README rather than a baseline. If the app can't
+run, leave the README with the command and say so.
 
-A live `/design-system` route (every token, type step and component rendered with the real
-components) is worth building when the project has more than a handful of components. It is an
-optional follow-up — offer it, don't build it unasked. When it exists: noindex, out of the sitemap,
-unlinked from navigation.
+**Hosted on claude.ai (optional).** To share it, or have Claude build on-brand from it, publish a
+Claude Design System from these files: [references/claude.md](references/claude.md). Offer it;
+don't do it unasked.
 
-### Phase 6 — Wire the agents
+### 5 · Wire the agents
 
-The documents only work if every agent reads them before touching UI. If the `agent-conventions`
-skill is available, run it now — it owns AGENTS.md and CLAUDE.md as a whole. Otherwise add the
-design block from [references/wiring.md](references/wiring.md) to both files, merging into what is
-already there (rule 6).
+If `agent-conventions` is installed, run it — it owns AGENTS.md and CLAUDE.md. Otherwise merge the
+blocks from [references/wiring.md](references/wiring.md) into both files.
 
-### Phase 7 — Verify
+### 6 · Verify
 
 ```bash
-npm run tokens:check                    # generated files match the code — and the prose only
-                                        # names tokens ({colors.x}) and hex values that exist
-npx @google/design.md lint DESIGN.md    # 0 errors; warnings explained or fixed
-# plus the project's own typecheck, lint and build
+npm run tokens:check                    # frontmatter, tokens.json and preview match the code; the
+                                        # prose names only tokens and hex values that exist
+npx @google/design.md lint DESIGN.md    # 0 errors; warnings explained
+# plus the project's typecheck, lint and build
 ```
 
-`tokens:check` catches a stale `{colors.x}` or an invented hex in the prose; it can't catch a wrong
-*claim*. Re-read DESIGN.md adversarially for those: every rule has its reason, every file path
-exists, every "never" is true of the code today. Confirm the build actually runs the check (break
-it once, as in Phase 2).
+`tokens:check` catches a stale `{colors.x}` or an invented hex; it can't catch a wrong *claim*.
+Re-read DESIGN.md adversarially: every rule has its reason, every path exists, every "never" is
+true of the code today.
 
 ## Reporting back
 
-End with, in this order:
-
-1. **What now exists** — the files, one line each.
-2. **The audit** — the Phase 1 findings as a short table, and which of them went into Known
-   inconsistencies.
-3. **Decisions that are the user's** — each consolidation you did not make ("merge `--muted`
-   `#17191e` into `--card` `#16181d`?"), each mapping you were unsure of, the optional
-   `/design-system` route. One line each, with your recommendation.
+1. **What now exists** — the files, one line each, and the preview's path.
+2. **The audit** — the findings as a short table, and which went into Known inconsistencies.
+3. **The user's decisions** — each consolidation not made ("merge `--muted` into `--card`?"),
+   each uncertain mapping, hosting the preview, publishing to Claude. One line each, with a
+   recommendation.
 4. **The gate** — the command, and proof it failed on an invented value.
 
 ## Pitfalls
 
-- **clamp() in the frontmatter.** The spec's linter rejects it as a dimension. The generator
-  publishes the bound and keeps the clamp as a comment; don't "fix" that by hand.
-- **Fonts from a loader.** `next/font` and friends define `--font-*` at runtime, so the CSS alone
-  cannot name the family. Map them in `fontVars`; `--check` fails if the variable disappears.
-- **shadcn aliases.** Many projects carry shadcn's `--color-card`, `--radius-lg` and friends while
-  using their own tokens. The report lists them as having no static reference — that is a finding
-  for Known inconsistencies, not permission to delete them.
-- **A monochrome primary.** When there is no brand hue, `primary` maps to the text colour. That is
-  correct; say it in Colors so nobody "adds the missing accent".
-- **Dynamic class names.** `bg-${tone}` cannot be seen statically. Before calling a token unused,
-  grep for the prefix.
-- **The generator is the project's copy.** Update it by copying the skill's newer version and
-  running `tokens`; the version is the `VERSION` export at the top.
+- **Lint warnings with `"all": true`.** Once components exist, the linter warns about every colour
+  no component references. Those are information, not errors; say so in the report.
+- **Motion warnings.** The published CLI (0.4) predates the spec's `motion` section and warns that
+  it is ignored. The spec includes it; keep it.
+- **clamp().** The spec wants a plain dimension. The frontmatter carries the desktop bound with the
+  clamp as a comment; tokens.json and the Typography prose say it's fluid.
+- **Fonts from a loader** (`next/font`) exist only at runtime. Map them in `fontVars`.
+- **A monochrome primary.** No brand hue means `primary` is the text colour. Correct — say so in
+  Colors so nobody "adds the missing accent".
+- **Dynamic class names.** `bg-${tone}` can't be seen statically; grep the prefix before calling a
+  token unused.
+- **The generator is the project's copy.** Update it by copying the newer version and running
+  `tokens`; the version is the `VERSION` export at the top.

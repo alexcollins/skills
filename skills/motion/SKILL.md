@@ -9,7 +9,7 @@ description: >-
 license: MIT
 metadata:
   author: alexcollins
-  version: "1.0.0"
+  version: "1.0.1"
   adapted-from: emilkowalski/skills — emil-design-eng, animate; jakubkrehel/skills — better-ui (MIT)
 ---
 
@@ -21,8 +21,8 @@ code. Make the call, give the reason in one line, write it — never a menu of o
 
 ## Tokens first
 
-Read the project's motion tokens before writing a curve or a duration — `DESIGN.md`,
-`design/motion.md`, the CSS custom properties, the Tailwind config. Use what exists, and map
+Read the project's motion tokens before writing a curve or a duration — `DESIGN.md` (its
+`motion` frontmatter and Motion section), the CSS custom properties, the Tailwind config. Use what exists, and map
 anything missing onto the nearest token that does.
 
 **Never reference a variable the project doesn't define.** `var(--ease-drawer)` where no

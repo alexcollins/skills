@@ -8,9 +8,10 @@ value the code doesn't. `--init` writes a proposal; review every mapping before 
 - [Keys](#keys)
 - [Mapping values](#mapping-values)
 - [Typography](#typography)
-- [Themes, fluid values and components](#themes-fluid-values-and-components)
+- [Themes, all, motion, fluid values and components](#themes-all-motion-fluid-values-and-components)
+- [What tokens.json holds](#what-tokensjson-holds)
+- [The preview](#the-preview)
 - [The sweep](#the-sweep)
-- [extend: a project's own semantic layer](#extend-a-projects-own-semantic-layer)
 - [Recipes by stack](#recipes-by-stack)
 - [Monorepos and non-Node projects](#monorepos-and-non-node-projects)
 
@@ -24,14 +25,14 @@ value the code doesn't. `--init` writes a proposal; review every mapping before 
 | `tailwind` | Tailwind 3 only | Path to `tailwind.config.{js,ts}`. Resolved through the project's own `tailwindcss/resolveConfig` — so dependencies must be installed. Omit for Tailwind 4: its theme is read from the CSS |
 | `fontVars` | when fonts load at runtime | `{ "--font-geist-sans": "Geist Sans" }`. Family names the CSS can't know. `--check` fails if a listed variable is no longer mentioned anywhere in the source |
 | `sweep` | | Where to look for literals in markup. See [the sweep](#the-sweep) |
-| `extra` | | Values that live in code, not CSS: `[{ "name": "heroGradient", "file": "components/hero-canvas.tsx", "const": "GRADIENT" }]`. Must be a plain array or object literal |
-| `extend` | | A module that adds the project's own semantic groups to tokens.json. See [extend](#extend-a-projects-own-semantic-layer) |
+| `extra` | | Values that live in code, not CSS: `[{ "name": "heroGradient", "file": "components/hero-canvas.tsx", "const": "GRADIENT" }]`. Must be a plain array or object literal. Kept in tokens.json under `$extensions` |
 | `references` | | Extra files that *use* tokens (a theme.ts, a plugin), so `--report` doesn't call their tokens unused |
 | `output` | | Where tokens.json goes. Default `design/tokens.json` |
+| `preview` | | `{ "file": "design/preview.html", "fonts": { "Geist Sans": "Geist" }, "googleFonts": true, "sample": "…" }`, or `false` for none. See [the preview](#the-preview) |
 | `designMd` | for DESIGN.md | The frontmatter mapping. Without it, only tokens.json is written |
 
-`designMd` keys: `file` (default `DESIGN.md`), `name`, `description`, `mode`, `colors`,
-`typography`, `rounded`, `spacing`, `components`, `modes`, `fluid`, `omitted`.
+`designMd` keys: `file` (default `DESIGN.md`), `name`, `description`, `themes`, `all`, `colors`,
+`typography`, `rounded`, `spacing`, `motion`, `components`, `fluid`, `omitted`.
 
 ## Naming colours
 
@@ -106,35 +107,56 @@ Name the roles after the spec's recommended tokens where they fit — `headline-
 — and map roles, not every variant. Nine to fifteen is typical. A system with four faces times
 fourteen steps does not need fifty-six entries; it needs the eight an agent will actually reach for.
 
-## Themes, fluid values and components
+## Themes, all, motion, fluid values and components
 
-**The theme people see.** `"mode": ".dark"` makes the frontmatter publish the dark theme. Set it
-when the product is dark-first — `<html class="dark">`, a theme provider defaulting to dark —
-because the unsuffixed tokens should be what users actually see. `--init` detects this.
+**Themes.** `"themes": { ":root": "light", ".dark": "dark" }`, default first — the theme people see
+unless they switch. A dark-first product (`<html class="dark">`, a provider defaulting to dark)
+lists `.dark` first; `--init` detects it. The default theme is published whole at the top level of
+`colors`, so every `{colors.x}` reference resolves. Each other theme becomes a group holding only
+the colours it changes:
 
-**Other themes.** tokens.json always carries every theme in full. In DESIGN.md, describe them in
-the Colors prose ("three themes: dark by default, light, and a user-tinted custom theme; every
-surface uses semantic tokens, so all three work without per-theme code"). `"modes": { ":root":
-"light" }` additionally publishes each mapped colour as `<name>-light`, only where it differs —
-but the linter flags every suffixed colour as unreferenced once components exist, so prefer prose
-unless a downstream tool needs the values. Any selector works as a mode: `.dark`,
-`[data-theme="dark"]`, `@media (prefers-color-scheme: dark) :root`.
+```yaml
+colors:
+  primary: "#1a1c1e"
+  background: "#ffffff"
+  dark:
+    primary: "#e8e6f0"
+    background: "#15161a"
+```
 
-A block only counts as a mode when it re-points a variable `:root` declares. A component that sets
-its own variables (`.spotlight { --spot-x: 0 }`) is recorded under `scoped` in tokens.json, not
-treated as a theme.
+Any selector works: `.dark`, `[data-theme="dark"]`, `@media (prefers-color-scheme: dark) :root`. A
+block only counts when it re-points a variable `:root` declares; a component's own variables
+(`.spotlight { --spot-x: 0 }`) aren't a theme. With no `themes`, one theme is published (`"mode":
+".dark"` picks which, for a single-theme dark product).
+
+**All.** `"all": true` publishes every colour, radius (`--radius*`) and spacing (`--space*`,
+`--spacing*`) variable the project declares, named after the variable (`--fg-muted` → `fg-muted`,
+`--color-brand` → `brand`). The role mapping sits on top: a variable already mapped to a role isn't
+published twice, and a variable that only points at another (`--color-x: var(--x)`, Tailwind 4's
+plumbing) is skipped. Without it, only mapped roles are published.
+
+**Motion.** Purpose names, as the spec recommends:
+
+```json
+"motion": {
+  "state-change":  { "duration": "--duration-fast", "timingFunction": "--ease-out" },
+  "surface-enter": { "duration": "250ms", "timingFunction": "--ease-out", "delay": "0ms" }
+}
+```
+
+Durations resolve to milliseconds; a variable that isn't a duration fails.
 
 **Fluid values.** The spec requires a plain dimension (`px`, `rem`, `em`) and its linter rejects
 `clamp()`. With `"fluid": "max"` (default) the frontmatter carries the clamp's upper bound — the
 desktop value — with the full clamp as a trailing YAML comment; `"min"` carries the mobile bound.
-tokens.json always keeps the clamp whole. Say in Typography prose that the scale is fluid, and
-between which widths.
+Say in Typography prose that the scale is fluid, and between which widths.
 
 **Components.** Keep to the spec's eight properties: `backgroundColor`, `textColor`, `typography`,
 `rounded`, `padding`, `size`, `height`, `width`. Reference tokens as `{colors.primary}`; variants
 are sibling keys (`button-primary`, `button-primary-hover`). Every `{ref}` must resolve inside the
 frontmatter, or the generator fails. Map the handful of primitives an agent builds with — button
-variants, input, card, chip — not every component; the rest belong in `design/components.md`.
+variants, input, card, chip — not every component; the rest are listed in DESIGN.md's Components
+prose with `@path` references.
 
 **Omitted.** `"omitted": [{ "section": "spacing", "reason": "Tailwind's default 4px scale, unmodified" }]`
 tells the linter a group is intentionally absent.
@@ -168,52 +190,44 @@ arbitrary value). Comments are blanked before sweeping so prose like "rounded co
 count. Hex colours written in code are reported by `--report` but never gated — a third-party logo
 colour is legitimate.
 
-## extend: a project's own semantic layer
+## What tokens.json holds
 
-By default tokens.json holds what the generator parsed: `theme` (every custom property, resolved,
-per mode), `tailwind`, `literals`. When something already **consumes** tokens.json in a curated
-shape — a `/design-system` page reading `color.primitive`, a Figma sync, a native app — keep that
-shape with `extend` instead of hand-editing the output or keeping a second generator.
+The W3C Design Tokens format (DTCG 2025.10), so any tool that reads DTCG reads it:
 
-```json
-{ "extend": "scripts/tokens.extend.mjs" }
-```
+| Group | `$type` | From |
+|---|---|---|
+| `color` | `color` | The frontmatter's colours; theme groups stay nested (`color.dark.surface`) |
+| `typography` | `typography` | The frontmatter's type roles. `em` letter-spacing becomes px against the font size |
+| `spacing`, `rounded` | `dimension` | The frontmatter |
+| `motion` | `transition` | The frontmatter's motion tokens |
+| `duration` | `duration` | Every `--duration-*` / `--dur-*` variable |
+| `easing` | `cubicBezier` | Every `--ease*` / `--easing*` variable |
+| `shadow` | `shadow` | Every `--shadow*` variable whose value can be read as a shadow |
+| `zIndex` | `number` | Every `--z-*` variable |
+| `breakpoint` | `dimension` | Tailwind 3 `screens`, or `--breakpoint-*` |
 
-```js
-// scripts/tokens.extend.mjs
-export default function tokens({ v, resolve, decl, distinct, tailwind }) {
-  return {
-    color: {
-      ground: v('--bg'),                       // { value: '#…', var: '--bg' }; throws if absent
-      text: v('--fg'),
-    },
-    radius: distinct(/rounded-\[(\d+)px\]/, Number),  // every rounded-[Npx] in the sweep
-    easing: { out: decl(':root', '--ease-out') },     // as written in the stylesheet
-    container: tailwind?.maxWidth?.['6xl'],           // Tailwind 3, fully resolved
-  };
-}
-```
+Colours use the same shape Google's `design.md export --format dtcg` writes (`colorSpace`,
+`components`, `alpha`, `hex`). The generator's own data — sources, themes, the sweep's literals that
+`--check` gates, `extra` — lives under `$extensions["design-contract"]`, where DTCG tools expect
+vendor data and ignore it.
 
-The default export receives:
+## The preview
 
-| Helper | Returns |
-|---|---|
-| `v(name)` | `{ value, var }` for a `:root` custom property as written. Throws if it isn't declared |
-| `root` | Every `:root` custom property, as written |
-| `resolve(value, mode?)` | `value` with every `var()` and `calc()` resolved, in `:root` or a mode |
-| `decl(selector, prop)` | The value of `prop` in the first rule for exactly `selector`. Throws if none |
-| `distinct(re, cast?)` | Sorted distinct values of `re`'s first group across the swept files |
-| `literal(file, name)` | A plain array or object literal assigned to `name` in `file` |
-| `tailwind` | The resolved Tailwind 3 theme, or `null` on Tailwind 4 |
-| `literals` | The sweep's distinct literals by category |
-| `fail(msg)` | Stop the build with a message naming the module |
+`design/preview.html` is written from the frontmatter and the DESIGN.md body: colours per theme
+with their contrast (an `on-x` colour is measured on `x`), the type ramp, spacing, radii, motion
+tiles that play on hover with their curves drawn, the components rendered from their tokens, the
+extra code tokens, then the body as Guidelines. One file, no build step; it loads only the font
+stylesheet.
 
-It may be async. What it returns is merged into tokens.json at the top level, so `--check` gates
-it like everything else. The generator's own keys (`theme`, `modes`, `scoped`, `tailwind`,
-`literals`, `sources`, `extra`, `$generated`) are reserved; returning one fails.
-
-Every helper throws rather than guessing, so a renamed variable breaks the build instead of
-publishing `undefined`. Don't catch those errors in the module.
+- **Fonts.** Each family is requested from Google Fonts by name. When the CSS name differs from
+  Google's (`next/font` calls it "Geist Sans", Google calls it "Geist"), map it:
+  `"fonts": { "Geist Sans": "Geist" }`. A URL value loads that stylesheet instead; `false` skips a
+  family; `"googleFonts": false` turns the requests off. Without the font, the sample falls back to
+  the right kind of face (sans, serif or mono).
+- **Hosting.** Point `file` into the public folder — `public/design-system/index.html` — and it
+  ships with the site. It carries `noindex`; keep it out of the sitemap and navigation.
+- **Gated.** `--check` fails when the preview is out of date — including after a prose edit,
+  because it renders the body. Run `npm run tokens` after editing DESIGN.md.
 
 ## Recipes by stack
 

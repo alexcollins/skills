@@ -20,10 +20,8 @@ Put it near the top — agents weight what they read first.
 | | |
 |---|---|
 | [`DESIGN.md`](./DESIGN.md) | Identity, colour, type, shape, do/don't. **Start here.** |
-| [`design/tokens.json`](./design/tokens.json) | Every value, machine-readable. **Generated — never hand-edit.** |
-| [`design/components.md`](./design/components.md) | The component inventory, and when not to use each one. |
-| [`design/layout.md`](./design/layout.md) | Page shell, widths, grids, breakpoints, z-index. |
-| [`design/motion.md`](./design/motion.md) | Curves, durations, reduced motion. |
+| [`design/tokens.json`](./design/tokens.json) | Every value, in the W3C DTCG format. **Generated — never hand-edit.** |
+| [`design/preview.html`](./design/preview.html) | The system rendered: colours per theme, type, spacing, radii, motion, components. **Generated.** |
 | [`design/references/`](./design/references/) | Full-page captures at 1440 and 390. |
 
 Use existing components and brand assets before creating replacements. Do not approximate logos or
@@ -57,8 +55,8 @@ Shorter — CLAUDE.md is loaded into every session, so it points rather than rep
 ## Design system
 
 Before creating or substantially modifying user-facing UI, read [`./DESIGN.md`](./DESIGN.md).
-It and the files it links (`design/tokens.json`, `components.md`, `layout.md`, `motion.md`,
-`design/references/`) are the canonical design specification for this repository.
+It and the files it links (`design/tokens.json`, `design/preview.html`, `design/references/`) are
+the canonical design specification for this repository.
 
 The quick version is in DESIGN.md; these five are the ones most often got wrong:
 

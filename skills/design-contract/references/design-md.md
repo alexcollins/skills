@@ -31,28 +31,27 @@ Two consequences:
 
 ## Section order
 
-Spec sections keep this order and these exact headings — tools parse them. Omit one only if it
-genuinely doesn't apply (and list it in `designMd.omitted` with a reason). The skill's extension
-sections are marked *ext*; the spec preserves unknown sections and its linter accepts them
-anywhere.
+The spec's sections keep this order and these headings — tools parse them. Omit one only when it
+genuinely doesn't apply (and add it to `designMd.omitted` with a reason when it's a token group).
+The last three are this skill's; the spec preserves unknown sections.
 
 1. `## Overview`
-2. `## Source of truth` *ext*
-3. `## Colors`
-4. `## Typography`
-5. `## Layout`
-6. `## Elevation & Depth`
-7. `## Shapes`
-8. `## Motion` *ext*
-9. `## Brand assets` *ext*
-10. `## Components`
-11. `## Do's and Don'ts`
-12. `## Deliberate choices` *ext*
-13. `## Known inconsistencies` *ext*
-14. `## Before shipping UI` *ext*
+2. `## Colors`
+3. `## Typography`
+4. `## Layout`
+5. `## Elevation & Depth`
+6. `## Shapes`
+7. `## Motion`
+8. `## Voice & Content Strategy`
+9. `## Components`
+10. `## Do's and Don'ts`
+11. `## Deliberate choices` *ext*
+12. `## Known inconsistencies` *ext*
+13. `## Before shipping UI` *ext*
 
 Never rename a spec heading ("Color Palette & Roles" breaks parsing; it's "Colors"). Never repeat
-one — a duplicate heading makes the linter reject the whole file.
+one — a duplicate makes the linter reject the whole file. Everything goes in this one file: there
+are no separate component, layout or motion documents to drift apart.
 
 ## Section by section
 
@@ -68,25 +67,18 @@ Then three to six short paragraphs, each one a **rule with its reason**, bold le
 
 End with **Key characteristics:** — four to six bullets an agent can check a screen against.
 
+Then one short paragraph on where values come from: which file owns colours and type, that the
+frontmatter, `design/tokens.json` and `design/preview.html` are generated, and that
+`npm run tokens:check` fails the build when they drift.
+
 If the product has a strategy document (a PRODUCT.md, a brief) take only the durable constraints
 from it. DESIGN.md is visual; audience and positioning live elsewhere.
 
-### Source of truth
-
-Which file owns which kind of value, and the commands. Short, and a table:
-
-| Value | Owned by | Change it there, then |
-|---|---|---|
-| Colours, radii, type scale | `src/app/globals.css` | `npm run tokens` |
-| Breakpoints, easing | `tailwind.config.ts` | `npm run tokens` |
-| Font families | `src/app/layout.tsx` (next/font) | update `fontVars` |
-
-State that the frontmatter and `design/tokens.json` are generated, and that `npm run tokens:check`
-fails the build when they drift.
-
 ### Colors
 
-One sentence on the palette's character, then each mapped colour: **descriptive name**, the token,
+One sentence on the palette's character and how many themes there are (the default is the
+top-level frontmatter; other themes are groups that list only what they change). Then each mapped
+colour: **descriptive name**, the token,
 where it is used, why. Use the frontmatter name so prose and tokens connect:
 
 > - **Ground** `{colors.background}` — every page background. A desaturated blue-violet, never neutral
@@ -111,9 +103,10 @@ a generic tell — mono caps labels, for instance — it is also listed in Delib
 
 ### Layout
 
-The page shell, max widths, the grid, the section rhythm (with the actual classes or values), the
-breakpoints and what changes at each, copy widths. Point to `design/layout.md` for the full
-reference and keep this section to what an agent needs for a new page.
+What a new page needs to match every other page: the page shell and its max width and gutter, by
+class name; section rhythm at each breakpoint as the literal classes; copy widths; the grid
+patterns and when each applies; each breakpoint and what changes at it ("below md the rail becomes
+a tab bar"); the z-index ladder by name. Values off the ladder go in Known inconsistencies.
 
 ### Elevation & Depth
 
@@ -128,21 +121,40 @@ border language, clipping, any signature geometry. If radii nest, the concentric
 
 ### Motion
 
-The curves by name and how many there are (usually two), durations by interaction class, what
-must never animate, reduced-motion handling. Point to `design/motion.md` for the full reference.
-The spec endorses a `## Motion` section with its own inline YAML block if you want one — keep it to
-values the code defines.
+Where agents improvise most. The curves by name, and how many ("two, and only two", so a third is
+visibly a violation); durations by kind of interaction with a ceiling for each ("hover ≤ 150ms");
+the one page entrance, if there is one; what never animates (high-frequency and keyboard actions,
+lists that re-sort); reduced motion, and the rule that a new loop joins it in the same commit.
+Name the frontmatter's motion tokens (`{motion.state-change}`). If code references an easing or
+duration variable nothing defines, say so loudly: an undefined `var()` voids the whole declaration.
 
-### Brand assets
+### Voice & Content Strategy
 
-Every logo and mark by path, which to use where, and the rule: **never recreate, redraw,
+How the product writes, because copy is part of the system: tone in two or three words and what it
+rules out; capitalisation; the product's names for its own things and the synonyms to avoid;
+button-label grammar; what empty, loading and error states say; number, date and unit formats.
+Skip it only for a product with no interface copy.
+
+### Brand assets (in Overview)
+
+A `### Brand assets` subsection at the end of Overview, so it sits inside the spec's order. Every logo and mark by path, which to use where, and the rule: **never recreate, redraw,
 approximate or re-type the logo**, as SVG, as a path or as text. If there is no logo mark, say
 "there is no mark — don't draw one". Agents invent logos when this section is missing.
 
 ### Components
 
-The primitives an agent builds with, by path, with variants and states — and a **Don't** for each
-naming what to use instead. Keep it to the core set; `design/components.md` holds the rest.
+The inventory that stops a second button being built. Lowest layer first (primitives, patterns,
+form controls, CSS utilities like `.type-*`, icons), most used first within a layer. Each entry: an
+`@path` reference to the source, the variants and when each applies, the states, and a required
+**Don't** naming the misuse to expect and what to use instead:
+
+> - **Button** `@components/ui/button.tsx` — `default` (the one primary action), `ghost`
+>   (toolbars). Hover, press 0.96, focus ring, disabled 40%. **Don't** use it for a clickable
+>   card — cards are content and take no press scale.
+
+`@path` is the spec's external reference: an inline code span, resolved from DESIGN.md's folder.
+Before writing, list every component that overlaps another (two cards, a `Button` and a hand-rolled
+`<a class="btn">`); say which is canonical, and put the legacy one in Known inconsistencies.
 
 ### Do's and Don'ts
 
@@ -193,7 +205,8 @@ uses them, the verify commands, the widths to check, the live reference to open.
 Name tokens the way the frontmatter does — `{colors.background}`, `{typography.headline-lg}` — so an
 agent can join prose to value. You may repeat an exact value in parentheses for a human reader
 (`{colors.background}` (#15161A)), but it must match the frontmatter exactly; the verify step checks.
-Never state a value that differs from the frontmatter: the frontmatter is normative.
+Never state a value that differs from the frontmatter: the frontmatter is normative. A colour in a
+non-default theme is `{colors.dark.surface}`; `{motion.state-change}` names a motion token.
 
 ## Adopting an existing document
 
@@ -212,6 +225,7 @@ When a DESIGN.md, style guide, or design rules inside CLAUDE.md already exist:
 
 - [ ] Opens with a specific reference, not adjectives
 - [ ] Spec sections in order with exact headings; no duplicates
+- [ ] Every component has an `@path`, its variants and a Don't
 - [ ] Every rule has its reason
 - [ ] Every value in prose matches the frontmatter or tokens.json
 - [ ] Brand assets section exists and says "never recreate the logo"
